@@ -11,7 +11,7 @@ import numpy as np
 
 from config import (
     ACTIVE_DATASET, DATASET_ROOT, MODEL_SAVE_DIR, EXPORT_DIR,
-    BEST_MODEL_PATH, ONNX_PATH, TFLITE_FP16_PATH
+    BEST_MODEL_PATH, ONNX_PATH, TFLITE_FP16_PATH, get_dataset_path
 )
 from data_loading import create_dataloaders
 from preprocessing import ThermalPreprocessor, analyze_dataset_anchors, GridEncoder
@@ -25,7 +25,10 @@ def parse_args():
 
     # Train
     train_parser = subparsers.add_parser('train', help='Train the model')
-    train_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET, choices=['llvip', 'kaist'], help='Dataset to use')
+    train_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET,
+                              choices=['llvip', 'kaist', 'flirv2'], help='Dataset to use')
+    train_parser.add_argument('--data-root', type=str, default=None,
+                              help='Override dataset directory (default: data/<dataset>/)')
     train_parser.add_argument('--epochs', type=int, default=None, help='Override config epochs')
     train_parser.add_argument('--batch-size', type=int, default=None, help='Override config batch size')
     train_parser.add_argument('--no-kmeans', action='store_true', help='Skip K-Means anchor optimization')
@@ -33,7 +36,9 @@ def parse_args():
     # Evaluate
     eval_parser = subparsers.add_parser('evaluate', help='Evaluate trained model')
     eval_parser.add_argument('--model-path', type=str, default=BEST_MODEL_PATH)
-    eval_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET)
+    eval_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET,
+                             choices=['llvip', 'kaist', 'flirv2'])
+    eval_parser.add_argument('--data-root', type=str, default=None)
 
     # Infer
     infer_parser = subparsers.add_parser('infer', help='Run inference on an image')
@@ -59,7 +64,9 @@ def main():
     os.makedirs(EXPORT_DIR, exist_ok=True)
 
     if args.mode == 'train':
+        dataset_root = args.data_root or get_dataset_path(args.dataset)
         print(f"Initializing training pipeline with dataset: {args.dataset}")
+        print(f"Dataset path: {dataset_root}")
 
         # 1. Base preprocessor
         encoder = GridEncoder()
@@ -68,8 +75,8 @@ def main():
         # 2. Dataloaders
         train_loader, val_loader = create_dataloaders(
             dataset_name=args.dataset,
-            dataset_root=DATASET_ROOT,
             preprocessor=preprocessor,
+            dataset_root=dataset_root,
             batch_size=args.batch_size
         )
 
@@ -81,7 +88,7 @@ def main():
             # Re-initialize dataloaders with updated encoder targets
             train_loader, val_loader = create_dataloaders(
                 dataset_name=args.dataset,
-                dataset_root=DATASET_ROOT,
+                dataset_root=dataset_root,
                 preprocessor=preprocessor,
                 batch_size=args.batch_size
             )

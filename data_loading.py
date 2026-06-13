@@ -22,9 +22,20 @@ import torch
 
 from config import (
     CLASS_MAP, NUM_CLASSES, INPUT_SIZE, INPUT_CHANNELS,
-    DATASET_ROOT, DATASET_CONFIGS, ACTIVE_DATASET,
+    DATASET_ROOT, DATASET_CONFIGS, ACTIVE_DATASET, get_dataset_path,
     BATCH_SIZE, NUM_WORKERS, VAL_RATIO, RANDOM_SEED, DEVICE,
 )
+
+# Person-like annotation labels mapped to person_visible for training
+PERSON_CLASS_NAMES = frozenset({
+    'pedestrian', 'person', 'people', 'cyclist', 'human', 'man', 'woman',
+    'bike', 'bicyclist',
+})
+
+
+def map_person_class_id():
+    """Return class id for pedestrian / cyclist detections."""
+    return CLASS_MAP['person_visible']
 
 
 # ============================================================================
@@ -149,10 +160,9 @@ class LLVIPDataset(Dataset):
                         continue
                     name = name_elem.text.strip()
 
-                    # Map all person-like classes to 'intrusion'
-                    if name.lower() in ('pedestrian', 'person', 'people',
-                                        'cyclist', 'human', 'man', 'woman'):
-                        class_id = CLASS_MAP['intrusion']
+                    # Map person-like classes to person_visible
+                    if name.lower() in PERSON_CLASS_NAMES:
+                        class_id = map_person_class_id()
                     else:
                         self.unknown_classes.add(name)
                         continue
@@ -332,9 +342,8 @@ class KAISTDataset(Dataset):
                         continue
 
                     class_name = parts[0].lower()
-                    # Map person-like classes to Person_Visible
-                    if class_name in ('person', 'people', 'cyclist', 'pedestrian'):
-                        class_id = CLASS_MAP['person_visible']
+                    if class_name in PERSON_CLASS_NAMES:
+                        class_id = map_person_class_id()
                     else:
                         self.unknown_classes.add(class_name)
                         continue
@@ -372,93 +381,96 @@ class KAISTDataset(Dataset):
 
 class FLIRv2Dataset(Dataset):
     """
-    FLIR Thermal Dataset v2.
-    Uses COCO JSON format for annotations.
+    FLIR Thermal Dataset v2 with paired RGB + thermal frames.
+    Uses COCO JSON format for thermal annotations.
     """
     def __init__(self, root_dir, split='train', verbose=True):
         import json
         self.root_dir = root_dir
         self.split = split
         self.verbose = verbose
-        
+
         cfg = DATASET_CONFIGS['flirv2']
         img_folder = cfg['train_dir'] if split == 'train' else cfg['val_dir']
+        rgb_folder = cfg['rgb_train_dir'] if split == 'train' else cfg['rgb_val_dir']
         annot_file = cfg['annotations_train'] if split == 'train' else cfg['annotations_val']
-        
+
         self.image_dir = os.path.join(root_dir, img_folder)
+        self.rgb_dir = os.path.join(root_dir, rgb_folder)
         annot_path = os.path.join(root_dir, annot_file)
-        
-        self.image_paths = []
-        self.annotations = {} # img_id -> list of dicts
-        
+
+        self.paired_paths = []  # (rgb_path, thermal_path, img_id)
+        self.annotations = {}  # img_id -> list of dicts
+
         if not os.path.exists(annot_path):
-            if verbose: print(f"⚠️  FLIRv2 annotation not found: {annot_path}")
+            if verbose:
+                print(f"⚠️  FLIRv2 annotation not found: {annot_path}")
             return
-            
+
         with open(annot_path, 'r') as f:
             coco_data = json.load(f)
-            
-        # Map category IDs to names
+
         cat_map = {cat['id']: cat['name'].lower() for cat in coco_data['categories']}
-        
-        # We only care about 'person' and 'bike' (map to intrusion)
+
         target_cats = set()
         for cat_id, name in cat_map.items():
-            if name in ('person', 'bike', 'bicyclist', 'pedestrian'):
+            if name in PERSON_CLASS_NAMES:
                 target_cats.add(cat_id)
-                
-        # Parse images
-        img_id_to_path = {}
+
+        img_id_to_thermal = {}
         for img in coco_data['images']:
-            img_id_to_path[img['id']] = os.path.join(self.image_dir, img['file_name'])
-            # Strip subdirectories if they don't exist
-            if not os.path.exists(img_id_to_path[img['id']]):
-                img_id_to_path[img['id']] = os.path.join(self.image_dir, os.path.basename(img['file_name']))
-            
+            thermal_path = os.path.join(self.image_dir, img['file_name'])
+            if not os.path.exists(thermal_path):
+                thermal_path = os.path.join(
+                    self.image_dir, os.path.basename(img['file_name'])
+                )
+
+            rgb_path = os.path.join(self.rgb_dir, os.path.basename(img['file_name']))
+            if not os.path.exists(rgb_path):
+                rgb_path = thermal_path.replace(img_folder, rgb_folder)
+
+            img_id_to_thermal[img['id']] = (rgb_path, thermal_path)
             self.annotations[img['id']] = []
-            
-        # Parse annotations
+
         for ann in coco_data['annotations']:
             img_id = ann['image_id']
             cat_id = ann['category_id']
-            
+
             if cat_id in target_cats and img_id in self.annotations:
-                # COCO format: [x, y, width, height]
                 x, y, w, h = ann['bbox']
                 self.annotations[img_id].append({
-                    'class_id': CLASS_MAP['intrusion'],
+                    'class_id': map_person_class_id(),
                     'xmin': int(x),
                     'ymin': int(y),
                     'xmax': int(x + w),
                     'ymax': int(y + h),
                 })
-                
-        # Finalize lists
-        self.valid_img_ids = [img_id for img_id in img_id_to_path.keys() if os.path.exists(img_id_to_path[img_id])]
-        self.image_paths = [img_id_to_path[i] for i in self.valid_img_ids]
-        
+
+        for img_id, (rgb_path, thermal_path) in img_id_to_thermal.items():
+            if os.path.exists(rgb_path) and os.path.exists(thermal_path):
+                self.paired_paths.append((rgb_path, thermal_path, img_id))
+
         if verbose:
-            print(f"📁 FLIRv2 [{split}]: {len(self.image_paths)} images loaded")
+            print(f"📁 FLIRv2 [{split}]: {len(self.paired_paths)} valid RGB+Thermal pairs")
 
     def __len__(self):
-        return len(self.image_paths)
+        return len(self.paired_paths)
 
     def __getitem__(self, idx):
-        img_id = self.valid_img_ids[idx]
-        img_path = self.image_paths[idx]
-        
-        image = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-        if image is None:
-            image = cv2.imread(img_path)
-            if image is not None:
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            else:
-                raise ValueError(f"Failed to load image: {img_path}")
-                
-        h_orig, w_orig = image.shape[:2]
+        img_path_rgb, img_path_t, img_id = self.paired_paths[idx]
+
+        image_thermal = cv2.imread(img_path_t, cv2.IMREAD_GRAYSCALE)
+        if image_thermal is None:
+            raise ValueError(f"Failed to load thermal image: {img_path_t}")
+
+        image_rgb = cv2.imread(img_path_rgb)
+        if image_rgb is None:
+            raise ValueError(f"Failed to load RGB image: {img_path_rgb}")
+        image_rgb = cv2.cvtColor(image_rgb, cv2.COLOR_BGR2RGB)
+
+        h_orig, w_orig = image_thermal.shape[:2]
         annotations = self.annotations.get(img_id, [])
-        
-        # Clamp boxes
+
         clamped_annots = []
         for ann in annotations:
             xmin = max(0, ann['xmin'])
@@ -466,10 +478,13 @@ class FLIRv2Dataset(Dataset):
             xmax = min(w_orig, ann['xmax'])
             ymax = min(h_orig, ann['ymax'])
             if xmax > xmin and ymax > ymin:
-                ann['xmin'], ann['ymin'], ann['xmax'], ann['ymax'] = xmin, ymin, xmax, ymax
-                clamped_annots.append(ann)
-                
-        return image, clamped_annots, (h_orig, w_orig)
+                clamped_annots.append({
+                    'class_id': ann['class_id'],
+                    'xmin': xmin, 'ymin': ymin,
+                    'xmax': xmax, 'ymax': ymax,
+                })
+
+        return (image_rgb, image_thermal), clamped_annots, (h_orig, w_orig)
 
 # ============================================================================
 # UNIFIED DATASET WRAPPER
@@ -531,14 +546,14 @@ class ThermalIntrusionDataset(Dataset):
 # DATALOADER FACTORY
 # ============================================================================
 
-def create_dataloaders(dataset_name, dataset_root, preprocessor,
+def create_dataloaders(dataset_name, preprocessor, dataset_root=None,
                        batch_size=None, num_workers=None, val_ratio=None):
     """
     Create train and validation DataLoaders for a given dataset.
 
     Args:
-        dataset_name: 'llvip' or 'kaist'
-        dataset_root: Path to the dataset root folder
+        dataset_name: 'llvip', 'kaist', or 'flirv2'
+        dataset_root: Path to the dataset root folder (auto-resolved if None)
         preprocessor: ThermalPreprocessor instance
         batch_size: Override config batch size
         num_workers: Override config num workers
@@ -550,6 +565,14 @@ def create_dataloaders(dataset_name, dataset_root, preprocessor,
     batch_size = batch_size or BATCH_SIZE
     num_workers = num_workers or NUM_WORKERS
     val_ratio = val_ratio or VAL_RATIO
+    dataset_root = dataset_root or get_dataset_path(dataset_name)
+
+    if not os.path.isdir(dataset_root):
+        raise FileNotFoundError(
+            f"Dataset directory not found: {dataset_root}\n"
+            f"Set MICROGHOST_DATA_ROOT or MICROGHOST_{dataset_name.upper()}_PATH, "
+            f"or pass --data-root to main.py"
+        )
 
     # Load raw dataset
     if dataset_name == 'llvip':

@@ -496,17 +496,22 @@ if __name__ == '__main__':
     encoder = GridEncoder()
     preprocessor = ThermalPreprocessor(encoder=encoder)
 
-    # Test with a dummy thermal frame
-    dummy_image = np.random.randint(0, 255, (120, 160), dtype=np.uint8)
+    # Test with dummy RGB + thermal frames
+    dummy_rgb = np.random.randint(0, 255, (120, 160, 3), dtype=np.uint8)
+    dummy_thermal = np.random.randint(0, 255, (120, 160), dtype=np.uint8)
     dummy_bboxes = [[30, 20, 80, 100]]
     dummy_labels = [1]
 
     img_tensor, targets = preprocessor.process(
-        dummy_image, dummy_bboxes, dummy_labels,
-        img_size=(120, 160), augment=False
+        image_rgb=dummy_rgb,
+        image_thermal=dummy_thermal,
+        bboxes_pascal=dummy_bboxes,
+        labels=dummy_labels,
+        img_size=(120, 160),
+        augment=False,
     )
 
-    print(f"  Input image:  {dummy_image.shape}")
+    print(f"  Input thermal: {dummy_thermal.shape}")
     print(f"  Output tensor: {img_tensor.shape}")
     print(f"  Targets:")
     for k, v in targets.items():

@@ -17,7 +17,7 @@ from preprocessing import ThermalPreprocessor
 from config import (
     INPUT_SIZE, INPUT_WIDTH, INPUT_HEIGHT, CLASS_MAP, NUM_CLASSES, NUM_ANCHORS,
     DEFAULT_ANCHOR_SIZES, CONFIDENCE_THRESHOLD, NMS_IOU_THRESHOLD,
-    MAX_DETECTIONS, DEVICE, ESP32_S3, ALERT_CONFIG
+    MAX_DETECTIONS, DEVICE, ESP32_S3, ALERT_CONFIG, CLASSIFIER_HIDDEN_DIM
 )
 
 # Inverse class map for alert generation
@@ -42,7 +42,7 @@ def load_inference_model(model_path, device=DEVICE):
     model = MicroGhostThermal(
         num_classes=config.get('num_classes', NUM_CLASSES),
         input_size=config.get('input_size', INPUT_SIZE),
-        classifier_hidden_dim=config.get('classifier_hidden_dim', 32)
+        classifier_hidden_dim=config.get('classifier_hidden_dim', CLASSIFIER_HIDDEN_DIM)
     )
 
     model.load_state_dict(state_dict)

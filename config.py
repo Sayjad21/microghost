@@ -19,8 +19,25 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # ============================================================================
 # DATASET CONFIGURATION
 # ============================================================================
-# Kaggle paths (update these when running on Kaggle)
-DATASET_ROOT = '/kaggle/input'
+# Default local data directory (override with MICROGHOST_DATA_ROOT env var)
+_PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATASET_ROOT = os.environ.get('MICROGHOST_DATA_ROOT', os.path.join(_PROJECT_DIR, 'data'))
+
+# Per-dataset subdirectory names under DATASET_ROOT
+DATASET_SUBDIRS = {
+    'llvip': 'llvip',
+    'kaist': 'kaist-multispectral',
+    'flirv2': 'FLIR_ADAS_v2',
+}
+
+
+def get_dataset_path(dataset_name):
+    """Resolve dataset root path (env override or default under DATASET_ROOT)."""
+    env_key = f'MICROGHOST_{dataset_name.upper()}_PATH'
+    if env_key in os.environ:
+        return os.environ[env_key]
+    subdir = DATASET_SUBDIRS.get(dataset_name, dataset_name)
+    return os.path.join(DATASET_ROOT, subdir)
 
 # Supported dataset configurations
 DATASET_CONFIGS = {
@@ -44,7 +61,7 @@ DATASET_CONFIGS = {
         'image_pattern': 'set{:02d}/V{:03d}/lwir/I{:05d}.png',
         'annotation_pattern': 'set{:02d}/V{:03d}/annotations/I{:05d}.txt',
         'annotation_format': 'kaist_txt',
-        'classes': ['person', 'cyclist', 'people'],  # We map all to 'intrusion'
+        'classes': ['person', 'cyclist', 'people'],  # Mapped to person_visible
         'native_resolution': (640, 480),     # W x H
     },
     'flirv2': {
@@ -52,10 +69,12 @@ DATASET_CONFIGS = {
         'description': 'FLIR Thermal Dataset v2',
         'train_dir': 'images_thermal_train',
         'val_dir': 'images_thermal_val',
+        'rgb_train_dir': 'images_rgb_train',
+        'rgb_val_dir': 'images_rgb_val',
         'annotations_train': 'annotations/thermal_annotations_train.json',
         'annotations_val': 'annotations/thermal_annotations_val.json',
         'annotation_format': 'coco_json',
-        'classes': ['person', 'bike'], # FLIR v2 has 'person', 'bike', 'car', etc. Map 'person' and 'bike' to intrusion.
+        'classes': ['person', 'bike'],  # Mapped to person_visible
         'native_resolution': (640, 512),
     },
 }
@@ -84,7 +103,7 @@ CLASS_MAP = {
     'person_camouflaged': 2,
     'vehicle_boat': 3
 }
-NUM_CLASSES = len(CLASS_MAP)  # 2: background + intrusion
+NUM_CLASSES = len(CLASS_MAP)  # 4: background + 3 intrusion types
 
 # Anchor configuration (optimized for human thermal signatures)
 NUM_ANCHORS = 2  # Reduced from 3 — fewer target shape types needed
@@ -198,8 +217,8 @@ def print_config():
     print(f"  Input:            {INPUT_SIZE}×{INPUT_SIZE}×{INPUT_CHANNELS} (thermal)")
     print(f"  Classes:          {NUM_CLASSES} → {list(CLASS_MAP.keys())}")
     print(f"  Anchors/cell:     {NUM_ANCHORS}")
-    print(f"  Grids:            {SMALL_GRID}×{SMALL_GRID} (small), "
-          f"{LARGE_GRID}×{LARGE_GRID} (large)")
+    print(f"  Grids:            {SMALL_GRID_H}×{SMALL_GRID_W} (small), "
+          f"{LARGE_GRID_H}×{LARGE_GRID_W} (large)")
     print(f"  Backbone:         {STEM_CHANNELS}→{SCALE1_CHANNELS}→"
           f"{SCALE2_CHANNELS}→{SCALE3_CHANNELS}")
     print(f"  FPN channels:     {FPN_CHANNELS}")
