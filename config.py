@@ -37,7 +37,14 @@ def get_dataset_path(dataset_name):
     if env_key in os.environ:
         return os.environ[env_key]
     subdir = DATASET_SUBDIRS.get(dataset_name, dataset_name)
-    return os.path.join(DATASET_ROOT, subdir)
+    path = os.path.join(DATASET_ROOT, subdir)
+    if os.path.isdir(path):
+        return path
+    # Fallback: dataset folder at project root (e.g. ./LLVIP)
+    alt = os.path.join(_PROJECT_DIR, subdir.upper() if dataset_name == 'llvip' else subdir)
+    if os.path.isdir(alt):
+        return alt
+    return path
 
 # Supported dataset configurations
 DATASET_CONFIGS = {
@@ -111,10 +118,10 @@ NUM_ANCHORS = 2  # Reduced from 3 — fewer target shape types needed
 # Default anchor aspect ratios (h/w) for human shapes in thermal
 # - Standing person at distance: tall, narrow (~0.5 w/h ratio → 2.0 h/w)
 # - Crouching/close person: roughly square (~1.0 h/w)
-DEFAULT_ANCHOR_RATIOS = [1.0, 2.0]
+DEFAULT_ANCHOR_RATIOS = [2.3, 3.5]   # LLVIP pedestrians: median h/w ≈ 2.93
 
 # Default anchor sizes (relative to image, sqrt of area)
-DEFAULT_ANCHOR_SIZES = [0.15, 0.35]
+DEFAULT_ANCHOR_SIZES = [0.108, 0.145]  # LLVIP: p25/p75 of sqrt(relative area)
 
 # Grid sizes derived from input height/width
 SMALL_GRID_H = INPUT_HEIGHT // 8    # 16
@@ -146,14 +153,14 @@ CLASSIFIER_HIDDEN_DIM = 64 # Classifier FC hidden
 EXPAND_RATIO = 3           # Reduced to 3
 
 # ============================================================================
-# TRAINING CONFIGURATION
+# TRAINING CONFIGURATION (tuned for local CPU — Acer Aspire 3, 7GB RAM)
 # ============================================================================
-BATCH_SIZE = 64            # Larger batches since images are small (64×64×1)
+BATCH_SIZE = 8             # Low RAM; increase to 16 if training is stable
 LEARNING_RATE = 1e-3       # Initial learning rate
 WEIGHT_DECAY = 1e-4        # L2 regularization
-EPOCHS = 100               # Maximum training epochs
-PATIENCE = 15              # Early stopping patience
-NUM_WORKERS = 2            # DataLoader workers (set 0 for Windows debug)
+EPOCHS = 50                # Enough for demo; early stopping may finish sooner
+PATIENCE = 10              # Early stopping patience
+NUM_WORKERS = 0            # 0 avoids RAM spikes on 7GB systems
 
 # Loss weights
 BBOX_WEIGHT = 1.0          # Bounding box regression
@@ -180,8 +187,9 @@ ESP32_S3 = {
     'clock_mhz': 240,
     'max_model_flash_kb': 4000,     # 4 MB flash budget for FP16 weights
     'max_arena_sram_kb': 4000,      # Arena can spill into PSRAM easily (4MB limit)
-    'target_fps': 10,               
-    'target_model_fp16_kb': 2500,   
+    'target_fps': 10,
+    'target_model_fp16_kb': 2048,   # 2 MB hard limit for ESP32 flash
+    'target_model_int8_kb': 2048,   # INT8 weights budget (deploy target)
 }
 
 # ============================================================================

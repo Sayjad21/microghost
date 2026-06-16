@@ -10,7 +10,7 @@ import torch
 import numpy as np
 
 from config import (
-    ACTIVE_DATASET, DATASET_ROOT, MODEL_SAVE_DIR, EXPORT_DIR,
+    ACTIVE_DATASET, DATASET_ROOT, MODEL_SAVE_DIR, EXPORT_DIR, LOG_DIR,
     BEST_MODEL_PATH, ONNX_PATH, TFLITE_FP16_PATH, get_dataset_path
 )
 from data_loading import create_dataloaders
@@ -62,6 +62,7 @@ def main():
     args = parse_args()
     os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
     os.makedirs(EXPORT_DIR, exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
 
     if args.mode == 'train':
         dataset_root = args.data_root or get_dataset_path(args.dataset)

@@ -1,2 +1,9 @@
-# LLVIP dataset (large; keep local only)
 LLVIP/
+.venv/
+__pycache__/
+*.pyc
+checkpoints/
+exports/
+logs/
+training_history.png
+confusion_matrix.png

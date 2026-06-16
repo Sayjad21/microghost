@@ -444,16 +444,15 @@ def analyze_dataset_anchors(dataset, num_anchors=2):
 
     print(f"\n📊 Analyzing {len(dataset)} samples for anchor optimization...")
 
-    for i in range(len(dataset)):
-        try:
-            _, annotations, (h_orig, w_orig) = dataset[i]
-        except Exception:
-            continue
+    if hasattr(dataset, 'iter_annotations'):
+        sample_iter = dataset.iter_annotations()
+    else:
+        sample_iter = (dataset[i][1:] for i in range(len(dataset)))
 
+    for annotations, (h_orig, w_orig) in sample_iter:
         for ann in annotations:
             w = (ann['xmax'] - ann['xmin']) / w_orig
             h = (ann['ymax'] - ann['ymin']) / h_orig
-
             if w > 0.01 and h > 0.01:
                 all_ratios.append(h / w)
                 all_sizes.append(math.sqrt(w * h))

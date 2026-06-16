@@ -117,6 +117,58 @@ class LLVIPDataset(Dataset):
             print(f"📁 LLVIP [{split}]: {len(self.paired_paths)} valid RGB+Thermal pairs, "
                   f"{found_annots} annotations found")
 
+    def _parse_xml(self, xml_path, w_orig, h_orig):
+        """Parse VOC XML into annotation dicts (no image I/O)."""
+        annotations = []
+        if not os.path.exists(xml_path):
+            return annotations
+        try:
+            root = ET.parse(xml_path).getroot()
+            for obj in root.findall('object'):
+                name_elem = obj.find('name')
+                if name_elem is None:
+                    continue
+                name = name_elem.text.strip()
+                if name.lower() not in PERSON_CLASS_NAMES:
+                    self.unknown_classes.add(name)
+                    continue
+                bndbox = obj.find('bndbox')
+                if bndbox is None:
+                    continue
+                xmin = int(float(bndbox.find('xmin').text))
+                ymin = int(float(bndbox.find('ymin').text))
+                xmax = int(float(bndbox.find('xmax').text))
+                ymax = int(float(bndbox.find('ymax').text))
+                xmin = max(0, min(xmin, w_orig - 1))
+                ymin = max(0, min(ymin, h_orig - 1))
+                xmax = max(xmin + 1, min(xmax, w_orig))
+                ymax = max(ymin + 1, min(ymax, h_orig))
+                annotations.append({
+                    'class_id': map_person_class_id(),
+                    'xmin': xmin, 'ymin': ymin,
+                    'xmax': xmax, 'ymax': ymax,
+                })
+        except ET.ParseError as e:
+            self.xml_errors.append((xml_path, str(e)))
+        except Exception as e:
+            self.xml_errors.append((xml_path, str(e)))
+        return annotations
+
+    def iter_annotations(self):
+        """Yield (annotations, (h, w)) from XML only — no image loading."""
+        for _, _, xml_path in self.paired_paths:
+            h_orig, w_orig = 1024, 1280
+            if os.path.exists(xml_path):
+                try:
+                    root = ET.parse(xml_path).getroot()
+                    size = root.find('size')
+                    if size is not None:
+                        h_orig = int(float(size.find('height').text))
+                        w_orig = int(float(size.find('width').text))
+                except Exception:
+                    pass
+            yield self._parse_xml(xml_path, w_orig, h_orig), (h_orig, w_orig)
+
     def __len__(self):
         return len(self.paired_paths)
 
@@ -145,54 +197,8 @@ class LLVIPDataset(Dataset):
         image_rgb = cv2.cvtColor(image_rgb, cv2.COLOR_BGR2RGB) # Convert BGR to RGB
 
         h_orig, w_orig = image_thermal.shape[:2]
-
-        # --- Parse Annotations ---
-        annotations = []
-
-        if os.path.exists(xml_path):
-            try:
-                tree = ET.parse(xml_path)
-                root = tree.getroot()
-
-                for obj in root.findall('object'):
-                    name_elem = obj.find('name')
-                    if name_elem is None:
-                        continue
-                    name = name_elem.text.strip()
-
-                    # Map person-like classes to person_visible
-                    if name.lower() in PERSON_CLASS_NAMES:
-                        class_id = map_person_class_id()
-                    else:
-                        self.unknown_classes.add(name)
-                        continue
-
-                    bndbox = obj.find('bndbox')
-                    if bndbox is None:
-                        continue
-
-                    xmin = int(float(bndbox.find('xmin').text))
-                    ymin = int(float(bndbox.find('ymin').text))
-                    xmax = int(float(bndbox.find('xmax').text))
-                    ymax = int(float(bndbox.find('ymax').text))
-
-                    # Validate coordinates
-                    xmin = max(0, min(xmin, w_orig - 1))
-                    ymin = max(0, min(ymin, h_orig - 1))
-                    xmax = max(xmin + 1, min(xmax, w_orig))
-                    ymax = max(ymin + 1, min(ymax, h_orig))
-
-                    annotations.append({
-                        'class_id': class_id,
-                        'xmin': xmin, 'ymin': ymin,
-                        'xmax': xmax, 'ymax': ymax,
-                    })
-
-            except ET.ParseError as e:
-                self.xml_errors.append((xml_path, str(e)))
-            except Exception as e:
-                self.xml_errors.append((xml_path, str(e)))
-        else:
+        annotations = self._parse_xml(xml_path, w_orig, h_orig)
+        if not os.path.exists(xml_path):
             self.missing_annotations.append(xml_path)
 
         return (image_rgb, image_thermal), annotations, (h_orig, w_orig)
