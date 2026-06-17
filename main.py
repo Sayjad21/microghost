@@ -18,6 +18,7 @@ from preprocessing import ThermalPreprocessor, analyze_dataset_anchors, GridEnco
 from model import MicroGhostThermal, print_model_analysis
 from training import Trainer, plot_training_history
 from inference import ThermalInferenceEngine, benchmark_model, export_to_onnx, export_to_tflite
+from evaluation import run_detection_evaluation
 
 def parse_args():
     parser = argparse.ArgumentParser(description="MicroGhost-Thermal Intrusion Detection")
@@ -39,6 +40,10 @@ def parse_args():
     eval_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET,
                              choices=['llvip', 'kaist', 'flirv2'])
     eval_parser.add_argument('--data-root', type=str, default=None)
+    eval_parser.add_argument('--conf-threshold', type=float, default=None,
+                             help='Objectness confidence threshold (default: config)')
+    eval_parser.add_argument('--limit', type=int, default=None,
+                             help='Evaluate only first N val images (quick test)')
 
     # Infer
     infer_parser = subparsers.add_parser('infer', help='Run inference on an image')
@@ -155,7 +160,14 @@ def main():
                       f"Temp: {det.get('temp_c', 0)}°C | BBox: {det['bbox']}")
 
     elif args.mode == 'evaluate':
-        print("Evaluation pipeline not fully implemented in CLI yet. Use training script outputs.")
+        dataset_root = args.data_root or get_dataset_path(args.dataset)
+        run_detection_evaluation(
+            model_path=args.model_path,
+            dataset_name=args.dataset,
+            dataset_root=dataset_root,
+            conf_threshold=args.conf_threshold,
+            limit=args.limit,
+        )
 
     else:
         print("Please specify a mode. Use --help for options.")

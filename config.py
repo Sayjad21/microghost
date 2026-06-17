@@ -130,7 +130,8 @@ LARGE_GRID_H = INPUT_HEIGHT // 16   # 8
 LARGE_GRID_W = INPUT_WIDTH // 16    # 10
 
 # Detection thresholds
-CONFIDENCE_THRESHOLD = 0.5      # Objectness score threshold
+CONFIDENCE_THRESHOLD = 0.25     # Lower for small-model objectness scores
+OBJ_METRIC_THRESHOLD = 0.25     # Threshold when computing objectness recall
 NMS_IOU_THRESHOLD = 0.45        # Non-Maximum Suppression IoU threshold
 MAX_DETECTIONS = 10             # Max simultaneous detections per frame
 
@@ -157,15 +158,15 @@ EXPAND_RATIO = 3           # Reduced to 3
 # ============================================================================
 BATCH_SIZE = 8             # Low RAM; increase to 16 if training is stable
 LEARNING_RATE = 1e-3       # Initial learning rate
-WEIGHT_DECAY = 1e-4        # L2 regularization
+WEIGHT_DECAY = 5e-4        # Slightly stronger L2 for val generalization
 EPOCHS = 50                # Enough for demo; early stopping may finish sooner
 PATIENCE = 10              # Early stopping patience
 NUM_WORKERS = 0            # 0 avoids RAM spikes on 7GB systems
 
-# Loss weights
-BBOX_WEIGHT = 1.0          # Bounding box regression
-OBJ_WEIGHT = 10.0          # Objectness (YOLO-style high weight)
-CLASS_WEIGHT = 2.0         # Classification (binary, slightly upweighted)
+# Loss weights — emphasize bbox regression (main generalization bottleneck)
+BBOX_WEIGHT = 3.0          # Bounding box regression
+OBJ_WEIGHT = 5.0           # Objectness (was 10; grid is mostly negatives)
+CLASS_WEIGHT = 0.5         # Image-level class (trivial on LLVIP)
 
 # Learning rate schedule
 LR_SCHEDULER = 'cosine_warm_restarts'
@@ -209,6 +210,7 @@ ALERT_CONFIG = {
 # ============================================================================
 MODEL_SAVE_DIR = 'checkpoints'
 BEST_MODEL_PATH = os.path.join(MODEL_SAVE_DIR, 'best_microghost_thermal.pth')
+LAST_MODEL_PATH = os.path.join(MODEL_SAVE_DIR, 'last_microghost_thermal.pth')
 EXPORT_DIR = 'exports'
 ONNX_PATH = os.path.join(EXPORT_DIR, 'microghost_thermal.onnx')
 TFLITE_PATH = os.path.join(EXPORT_DIR, 'microghost_thermal.tflite')

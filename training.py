@@ -21,12 +21,47 @@ from collections import defaultdict
 
 from config import (
     INPUT_SIZE, INPUT_WIDTH, INPUT_HEIGHT, NUM_CLASSES, NUM_ANCHORS,
-    DEFAULT_ANCHOR_SIZES, CLASS_MAP,
+    DEFAULT_ANCHOR_SIZES, CLASS_MAP, OBJ_METRIC_THRESHOLD,
     BBOX_WEIGHT, OBJ_WEIGHT, CLASS_WEIGHT,
     LEARNING_RATE, WEIGHT_DECAY, EPOCHS, PATIENCE,
     LR_T0, LR_T_MULT, LR_MIN,
-    MODEL_SAVE_DIR, BEST_MODEL_PATH, LOG_DIR, DEVICE,
+    MODEL_SAVE_DIR, BEST_MODEL_PATH, LAST_MODEL_PATH, LOG_DIR, DEVICE,
 )
+
+
+def _to_intrusion_binary(class_ids):
+    """Collapse multi-class labels to binary: 0=background, 1=any intrusion."""
+    return (np.asarray(class_ids) > 0).astype(np.int32)
+
+
+def _decode_grid_boxes(bbox_tensor, obj_mask, grid_w, grid_h, anchor_size):
+    """Decode positive grid cells to normalized [x1, y1, x2, y2]."""
+    pos = torch.nonzero(obj_mask, as_tuple=False)
+    if pos.numel() == 0:
+        return torch.zeros(0, 4)
+
+    gy = pos[:, 0].float()
+    gx = pos[:, 1].float()
+    cx = (gx + bbox_tensor[0][pos[:, 0], pos[:, 1]]) / grid_w
+    cy = (gy + bbox_tensor[1][pos[:, 0], pos[:, 1]]) / grid_h
+    w = anchor_size * torch.exp(bbox_tensor[2][pos[:, 0], pos[:, 1]].clamp(-3, 3))
+    h = anchor_size * torch.exp(bbox_tensor[3][pos[:, 0], pos[:, 1]].clamp(-3, 3))
+    x1, y1 = cx - w / 2, cy - h / 2
+    x2, y2 = cx + w / 2, cy + h / 2
+    return torch.stack([x1, y1, x2, y2], dim=1)
+
+
+def _iou_xyxy(boxes_a, boxes_b):
+    """Pairwise IoU for equal-length box tensors (N, 4)."""
+    inter_x1 = torch.max(boxes_a[:, 0], boxes_b[:, 0])
+    inter_y1 = torch.max(boxes_a[:, 1], boxes_b[:, 1])
+    inter_x2 = torch.min(boxes_a[:, 2], boxes_b[:, 2])
+    inter_y2 = torch.min(boxes_a[:, 3], boxes_b[:, 3])
+    inter = (inter_x2 - inter_x1).clamp(min=0) * (inter_y2 - inter_y1).clamp(min=0)
+    area_a = (boxes_a[:, 2] - boxes_a[:, 0]) * (boxes_a[:, 3] - boxes_a[:, 1])
+    area_b = (boxes_b[:, 2] - boxes_b[:, 0]) * (boxes_b[:, 3] - boxes_b[:, 1])
+    union = area_a + area_b - inter + 1e-7
+    return (inter / union).cpu().numpy()
 
 
 # ============================================================================
@@ -264,24 +299,27 @@ class MicroGhostThermalLoss(nn.Module):
 
 class MetricsTracker:
     """
-    Tracks detection and classification metrics per epoch.
+    Tracks detection-focused metrics per epoch.
 
     Metrics:
-    - Detection: IoU, Objectness Accuracy
-    - Classification: Accuracy, Precision, Recall, F1
-    - Losses: per-component breakdown
+    - Losses: total, bbox, obj, cls
+    - Detection: mean IoU on positive grid cells, objectness recall@threshold
+    - Classification: binary intrusion F1 (background vs any intrusion)
     """
 
-    def __init__(self, num_classes=None, anchor_sizes=None):
+    def __init__(self, num_classes=None, anchor_sizes=None, obj_threshold=None):
         self.num_classes = num_classes or NUM_CLASSES
-        self.class_names = list(CLASS_MAP.keys())
+        self.obj_threshold = obj_threshold or OBJ_METRIC_THRESHOLD
         self.small_grid_w = INPUT_WIDTH // 8
+        self.small_grid_h = INPUT_HEIGHT // 8
         self.large_grid_w = INPUT_WIDTH // 16
+        self.large_grid_h = INPUT_HEIGHT // 16
 
         if anchor_sizes is not None:
-            self.anchor_sizes = torch.tensor(anchor_sizes)
+            self.anchor_sizes = torch.tensor(anchor_sizes, dtype=torch.float32)
         else:
-            self.anchor_sizes = torch.tensor(DEFAULT_ANCHOR_SIZES)
+            self.anchor_sizes = torch.tensor(DEFAULT_ANCHOR_SIZES,
+                                             dtype=torch.float32)
 
         self.reset()
 
@@ -290,90 +328,105 @@ class MetricsTracker:
         self.losses = defaultdict(list)
         self.cls_preds = []
         self.cls_targets = []
-        self.obj_correct_s = 0
-        self.obj_total_s = 0
-        self.obj_correct_l = 0
-        self.obj_total_l = 0
-        self.iou_small = []
-        self.iou_large = []
+        self.bbox_ious = []
+        self.obj_pos_total = 0
+        self.obj_pos_detected = 0
+
+    def _update_detection_metrics(self, predictions, targets):
+        """IoU and objectness recall on positive grid cells only."""
+        scales = [
+            ('bbox_small', 'obj_small', self.small_grid_w, self.small_grid_h),
+            ('bbox_large', 'obj_large', self.large_grid_w, self.large_grid_h),
+        ]
+
+        with torch.no_grad():
+            for key_bbox, key_obj, grid_w, grid_h in scales:
+                pred_bbox = predictions[key_bbox]
+                pred_obj = predictions[key_obj]
+                tgt_bbox = targets[key_bbox]
+                tgt_obj = targets[key_obj]
+
+                for b in range(pred_bbox.shape[0]):
+                    for a, anchor_size in enumerate(self.anchor_sizes):
+                        mask = tgt_obj[b, a] > 0.5
+                        if not mask.any():
+                            continue
+
+                        off = a * 4
+                        pred_cells = pred_bbox[b, off:off + 4]
+                        tgt_cells = tgt_bbox[b, off:off + 4]
+
+                        pred_boxes = _decode_grid_boxes(
+                            pred_cells, mask, grid_w, grid_h, anchor_size.item()
+                        )
+                        tgt_boxes = _decode_grid_boxes(
+                            tgt_cells, mask, grid_w, grid_h, anchor_size.item()
+                        )
+                        if pred_boxes.shape[0] == 0:
+                            continue
+
+                        self.bbox_ious.extend(_iou_xyxy(pred_boxes, tgt_boxes))
+
+                        obj_scores = torch.sigmoid(pred_obj[b, a][mask])
+                        self.obj_pos_total += mask.sum().item()
+                        self.obj_pos_detected += (
+                            obj_scores > self.obj_threshold
+                        ).sum().item()
 
     def update(self, predictions, targets, losses):
         """Update metrics with one batch of results."""
-        # Losses
         for k, v in losses.items():
             self.losses[k].append(v.item())
 
-        # Classification
         pred_cls = predictions['label'].argmax(dim=1).cpu().numpy()
         true_cls = targets['label'].cpu().numpy()
         self.cls_preds.extend(pred_cls)
         self.cls_targets.extend(true_cls)
 
-        # Objectness accuracy
-        with torch.no_grad():
-            for scale, key_o in [('s', 'obj_small'), ('l', 'obj_large')]:
-                pred_o = (torch.sigmoid(predictions[key_o]) > 0.5).float()
-                true_o = (targets[key_o] > 0.5).float()
-                correct = (pred_o == true_o).sum().item()
-                total = true_o.numel()
-                if scale == 's':
-                    self.obj_correct_s += correct
-                    self.obj_total_s += total
-                else:
-                    self.obj_correct_l += correct
-                    self.obj_total_l += total
+        self._update_detection_metrics(predictions, targets)
 
     def compute(self):
         """Compute final metrics for epoch."""
         metrics = {}
 
-        # Average losses
         for k, v in self.losses.items():
             metrics[f'loss_{k}'] = np.mean(v)
 
-        # Objectness accuracy
-        metrics['obj_acc_small'] = self.obj_correct_s / max(1, self.obj_total_s)
-        metrics['obj_acc_large'] = self.obj_correct_l / max(1, self.obj_total_l)
-        metrics['obj_acc_avg'] = (metrics['obj_acc_small'] +
-                                  metrics['obj_acc_large']) / 2
+        metrics['bbox_iou'] = float(np.mean(self.bbox_ious)) if self.bbox_ious else 0.0
+        metrics['obj_recall'] = (
+            self.obj_pos_detected / max(1, self.obj_pos_total)
+        )
 
-        # Classification metrics
-        preds = np.array(self.cls_preds)
-        trues = np.array(self.cls_targets)
+        preds_bin = _to_intrusion_binary(self.cls_preds)
+        trues_bin = _to_intrusion_binary(self.cls_targets)
 
-        if len(preds) > 0:
-            metrics['cls_accuracy'] = (preds == trues).mean()
-
-            # Multiclass F1 macro
+        if len(preds_bin) > 0:
             from sklearn.metrics import precision_recall_fscore_support
-            try:
-                prec, rec, f1, _ = precision_recall_fscore_support(
-                    trues, preds, average='macro', zero_division=0
-                )
-                metrics['precision'] = prec
-                metrics['recall'] = rec
-                metrics['f1'] = f1
-            except Exception:
-                metrics['precision'] = 0.0
-                metrics['recall'] = 0.0
-                metrics['f1'] = 0.0
+            metrics['intrusion_accuracy'] = (preds_bin == trues_bin).mean()
+            prec, rec, f1, _ = precision_recall_fscore_support(
+                trues_bin, preds_bin, average='binary', zero_division=0
+            )
+            metrics['intrusion_precision'] = prec
+            metrics['intrusion_recall'] = rec
+            metrics['intrusion_f1'] = f1
 
         return metrics
 
     def get_confusion_matrix(self):
-        """Return 2×2 confusion matrix."""
+        """Return binary intrusion confusion matrix."""
         from sklearn.metrics import confusion_matrix
-        return confusion_matrix(
-            self.cls_targets, self.cls_preds,
-            labels=list(range(self.num_classes)),
-        )
+        preds_bin = _to_intrusion_binary(self.cls_preds)
+        trues_bin = _to_intrusion_binary(self.cls_targets)
+        return confusion_matrix(trues_bin, preds_bin, labels=[0, 1])
 
     def get_classification_report(self):
-        """Return detailed classification report string."""
+        """Return binary intrusion classification report."""
         from sklearn.metrics import classification_report
+        preds_bin = _to_intrusion_binary(self.cls_preds)
+        trues_bin = _to_intrusion_binary(self.cls_targets)
         return classification_report(
-            self.cls_targets, self.cls_preds,
-            target_names=self.class_names,
+            trues_bin, preds_bin,
+            target_names=['Background', 'Intrusion'],
             zero_division=0,
         )
 
@@ -389,7 +442,7 @@ class Trainer:
     Features:
     - Cosine annealing with warm restarts LR schedule
     - Early stopping with patience
-    - Best model checkpointing (by F1 score)
+    - Best model checkpointing (by lowest validation loss)
     - Gradient clipping
     - Comprehensive metric tracking
     """
@@ -427,22 +480,20 @@ class Trainer:
         self.train_metrics = MetricsTracker(anchor_sizes=anchor_sizes)
         self.val_metrics = MetricsTracker(anchor_sizes=anchor_sizes)
 
-        # History
-        self.history = {
-            'train_loss': [], 'val_loss': [],
-            'train_acc': [], 'val_acc': [],
-            'train_f1': [], 'val_f1': [],
-            'train_precision': [], 'val_precision': [],
-            'train_recall': [], 'val_recall': [],
-            'train_obj_acc': [], 'val_obj_acc': [],
-            'lr': [],
-        }
-
-        # Best model tracking
+        # Best model tracking (checkpoint saved on lowest val loss)
         self.best_val_loss = float('inf')
-        self.best_val_f1 = 0.0
         self.best_epoch = 0
         self.no_improve_count = 0
+
+        # History — detection-focused metrics
+        self.history = {
+            'train_loss': [], 'val_loss': [],
+            'train_bbox_loss': [], 'val_bbox_loss': [],
+            'train_bbox_iou': [], 'val_bbox_iou': [],
+            'train_obj_recall': [], 'val_obj_recall': [],
+            'train_intrusion_f1': [], 'val_intrusion_f1': [],
+            'lr': [],
+        }
 
     def train_epoch(self):
         """Train for one epoch."""
@@ -512,32 +563,30 @@ class Trainer:
             # Record history
             self.history['train_loss'].append(train_m['loss_total'])
             self.history['val_loss'].append(val_m['loss_total'])
-            self.history['train_acc'].append(train_m.get('cls_accuracy', 0))
-            self.history['val_acc'].append(val_m.get('cls_accuracy', 0))
-            self.history['train_f1'].append(train_m.get('f1', 0))
-            self.history['val_f1'].append(val_m.get('f1', 0))
-            self.history['train_precision'].append(
-                train_m.get('precision', 0))
-            self.history['val_precision'].append(val_m.get('precision', 0))
-            self.history['train_recall'].append(train_m.get('recall', 0))
-            self.history['val_recall'].append(val_m.get('recall', 0))
-            self.history['train_obj_acc'].append(train_m['obj_acc_avg'])
-            self.history['val_obj_acc'].append(val_m['obj_acc_avg'])
+            self.history['train_bbox_loss'].append(train_m.get('loss_bbox', 0))
+            self.history['val_bbox_loss'].append(val_m.get('loss_bbox', 0))
+            self.history['train_bbox_iou'].append(train_m.get('bbox_iou', 0))
+            self.history['val_bbox_iou'].append(val_m.get('bbox_iou', 0))
+            self.history['train_obj_recall'].append(train_m.get('obj_recall', 0))
+            self.history['val_obj_recall'].append(val_m.get('obj_recall', 0))
+            self.history['train_intrusion_f1'].append(
+                train_m.get('intrusion_f1', 0))
+            self.history['val_intrusion_f1'].append(
+                val_m.get('intrusion_f1', 0))
             self.history['lr'].append(lr)
 
-            # Check improvement
+            # Save best checkpoint on val loss; always keep latest epoch weights
             improved = False
-            val_f1 = val_m.get('f1', 0)
+            val_loss = val_m['loss_total']
 
-            if val_m['loss_total'] < self.best_val_loss:
-                self.best_val_loss = val_m['loss_total']
-                improved = True
-
-            if val_f1 > self.best_val_f1:
-                self.best_val_f1 = val_f1
+            if val_loss < self.best_val_loss:
+                self.best_val_loss = val_loss
                 self.best_epoch = epoch
                 improved = True
                 self._save_checkpoint(save_path, epoch, val_m)
+
+            last_path = LAST_MODEL_PATH
+            self._save_checkpoint(last_path, epoch, val_m)
 
             self.no_improve_count = 0 if improved else \
                 self.no_improve_count + 1
@@ -550,8 +599,9 @@ class Trainer:
                 f"{elapsed:.1f}s | "
                 f"LR: {lr:.1e} | "
                 f"Loss: {train_m['loss_total']:.4f}/{val_m['loss_total']:.4f} | "
-                f"Acc: {val_m.get('cls_accuracy', 0) * 100:.1f}% | "
-                f"F1: {val_f1 * 100:.1f}%{marker}"
+                f"IoU: {val_m.get('bbox_iou', 0):.3f} | "
+                f"ObjRec: {val_m.get('obj_recall', 0) * 100:.1f}% | "
+                f"IntrF1: {val_m.get('intrusion_f1', 0) * 100:.1f}%{marker}"
             )
 
             # Early stopping
@@ -564,9 +614,9 @@ class Trainer:
         print("  TRAINING COMPLETE")
         print("=" * 70)
         print(f"  Best Epoch:   {self.best_epoch + 1}")
-        print(f"  Best Val F1:  {self.best_val_f1 * 100:.2f}%")
         print(f"  Best Val Loss:{self.best_val_loss:.4f}")
-        print(f"  Saved to:     {save_path}")
+        print(f"  Best saved:   {save_path}")
+        print(f"  Last saved:   {LAST_MODEL_PATH}")
         print("=" * 70)
 
         return self.history
@@ -607,46 +657,42 @@ def plot_training_history(history, save_path='training_history.png'):
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # Accuracy
+    # BBox loss
     ax = axes[0, 1]
-    ax.plot(epochs, [x * 100 for x in history['train_acc']], 'b-',
-            label='Train')
-    ax.plot(epochs, [x * 100 for x in history['val_acc']], 'r-',
-            label='Val')
-    ax.set_title('Classification Accuracy (%)')
+    ax.plot(epochs, history['train_bbox_loss'], 'b-', label='Train')
+    ax.plot(epochs, history['val_bbox_loss'], 'r-', label='Val')
+    ax.set_title('BBox Loss')
     ax.set_xlabel('Epoch')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # F1
+    # BBox IoU on positive cells
     ax = axes[0, 2]
-    ax.plot(epochs, [x * 100 for x in history['train_f1']], 'b-',
-            label='Train')
-    ax.plot(epochs, [x * 100 for x in history['val_f1']], 'r-',
-            label='Val')
-    ax.set_title('Intrusion F1 Score (%)')
+    ax.plot(epochs, history['train_bbox_iou'], 'b-', label='Train')
+    ax.plot(epochs, history['val_bbox_iou'], 'r-', label='Val')
+    ax.set_title('BBox IoU (positive cells)')
     ax.set_xlabel('Epoch')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # Precision / Recall
+    # Objectness recall on positive cells
     ax = axes[1, 0]
-    ax.plot(epochs, [x * 100 for x in history['val_precision']], 'g-',
-            label='Precision')
-    ax.plot(epochs, [x * 100 for x in history['val_recall']], 'm-',
-            label='Recall')
-    ax.set_title('Val Precision & Recall (%)')
+    ax.plot(epochs, [x * 100 for x in history['train_obj_recall']], 'b-',
+            label='Train')
+    ax.plot(epochs, [x * 100 for x in history['val_obj_recall']], 'r-',
+            label='Val')
+    ax.set_title('Objectness Recall @ threshold (%)')
     ax.set_xlabel('Epoch')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # Objectness accuracy
+    # Binary intrusion F1
     ax = axes[1, 1]
-    ax.plot(epochs, [x * 100 for x in history['train_obj_acc']], 'b-',
+    ax.plot(epochs, [x * 100 for x in history['train_intrusion_f1']], 'b-',
             label='Train')
-    ax.plot(epochs, [x * 100 for x in history['val_obj_acc']], 'r-',
+    ax.plot(epochs, [x * 100 for x in history['val_intrusion_f1']], 'r-',
             label='Val')
-    ax.set_title('Objectness Accuracy (%)')
+    ax.set_title('Binary Intrusion F1 (%)')
     ax.set_xlabel('Epoch')
     ax.legend()
     ax.grid(True, alpha=0.3)

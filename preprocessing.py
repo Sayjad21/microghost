@@ -185,28 +185,22 @@ class ThermalAugmentor:
             self.use_albumentations = True
 
             self.train_transform = A.Compose([
-                # Geometric
                 A.HorizontalFlip(p=0.5),
-                A.VerticalFlip(p=0.1),
-                A.ShiftScaleRotate(
-                    shift_limit=0.1,
-                    scale_limit=0.2,
-                    rotate_limit=10,
-                    border_mode=cv2.BORDER_CONSTANT,
-                    value=0,
+                A.Affine(
+                    translate_percent={'x': (-0.1, 0.1), 'y': (-0.1, 0.1)},
+                    scale=(0.85, 1.15),
+                    rotate=(-12, 12),
+                    mode=cv2.BORDER_CONSTANT,
+                    cval=0,
                     p=0.6,
                 ),
-                # Thermal-specific: ambient temperature variation
                 A.RandomBrightnessContrast(
                     brightness_limit=0.3,
                     contrast_limit=0.3,
                     p=0.7,
                 ),
-                # Sensor noise
-                A.GaussNoise(var_limit=(5, 40), p=0.5),
-                # Focus variation
+                A.GaussNoise(std_range=(0.02, 0.08), p=0.5),
                 A.GaussianBlur(blur_limit=(3, 5), p=0.2),
-                # Resize
                 A.Resize(self.input_h, self.input_w),
             ], additional_targets={'image_thermal': 'image'}, bbox_params=A.BboxParams(
                 format='pascal_voc',

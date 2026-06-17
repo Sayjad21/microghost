@@ -670,6 +670,40 @@ def create_dataloaders(dataset_name, preprocessor, dataset_root=None,
     return train_loader, val_loader
 
 
+def get_val_base_dataset(dataset_name, dataset_root=None, val_ratio=None):
+    """
+    Return the raw validation Dataset (RGB+thermal pairs + VOC-style annotations).
+
+    Used for detection mAP evaluation without grid-encoded targets.
+    """
+    dataset_root = dataset_root or get_dataset_path(dataset_name)
+    val_ratio = val_ratio or VAL_RATIO
+
+    if not os.path.isdir(dataset_root):
+        raise FileNotFoundError(
+            f"Dataset directory not found: {dataset_root}"
+        )
+
+    if dataset_name == 'llvip':
+        return LLVIPDataset(dataset_root, split='test', verbose=False)
+
+    if dataset_name == 'kaist':
+        raw_dataset = KAISTDataset(dataset_root, verbose=False)
+        total = len(raw_dataset)
+        val_size = int(total * val_ratio)
+        train_size = total - val_size
+        generator = torch.Generator().manual_seed(RANDOM_SEED)
+        _, val_subset = random_split(
+            raw_dataset, [train_size, val_size], generator=generator
+        )
+        return val_subset
+
+    if dataset_name == 'flirv2':
+        return FLIRv2Dataset(dataset_root, split='val', verbose=False)
+
+    raise ValueError(f"Unknown dataset: {dataset_name}")
+
+
 if __name__ == '__main__':
     # Quick test: check if dataset can be located
     print("Data Loading Module — Self Test")

@@ -98,6 +98,55 @@ def nms(detections, iou_threshold=NMS_IOU_THRESHOLD):
     return keep[:MAX_DETECTIONS]
 
 
+def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
+                       anchor_sizes=None, conf_threshold=None):
+    """
+    Decode SSD-style head outputs into detection candidates (normalized xyxy).
+
+    Skips the image-level classifier gate — use for mAP evaluation.
+    """
+    anchor_sizes = anchor_sizes or DEFAULT_ANCHOR_SIZES
+    conf_threshold = conf_threshold if conf_threshold is not None else CONFIDENCE_THRESHOLD
+
+    small_grid_w, small_grid_h = INPUT_WIDTH // 8, INPUT_HEIGHT // 8
+    large_grid_w, large_grid_h = INPUT_WIDTH // 16, INPUT_HEIGHT // 16
+
+    def _decode_box(pred_box, grid_x, grid_y, grid_w, grid_h, anchor_size):
+        cx = (grid_x + pred_box[0]) / grid_w
+        cy = (grid_y + pred_box[1]) / grid_h
+        w = anchor_size * np.exp(np.clip(pred_box[2], -3, 3))
+        h = anchor_size * np.exp(np.clip(pred_box[3], -3, 3))
+        return [
+            max(0.0, min(1.0, cx - w / 2)),
+            max(0.0, min(1.0, cy - h / 2)),
+            max(0.0, min(1.0, cx + w / 2)),
+            max(0.0, min(1.0, cy + h / 2)),
+        ]
+
+    def _extract(obj_map, bbox_map, grid_w, grid_h):
+        candidates = []
+        obj_probs = torch.sigmoid(obj_map).cpu().numpy()
+        bbox_data = bbox_map.cpu().numpy()
+        for a in range(NUM_ANCHORS):
+            y_idx, x_idx = np.where(obj_probs[a] > conf_threshold)
+            for gy, gx in zip(y_idx, x_idx):
+                off = a * 4
+                bbox = _decode_box(
+                    bbox_data[off:off + 4, gy, gx],
+                    gx, gy, grid_w, grid_h, anchor_sizes[a],
+                )
+                candidates.append({
+                    'conf': float(obj_probs[a, gy, gx]),
+                    'bbox': bbox,
+                })
+        return candidates
+
+    candidates = []
+    candidates.extend(_extract(obj_small, bbox_small, small_grid_w, small_grid_h))
+    candidates.extend(_extract(obj_large, bbox_large, large_grid_w, large_grid_h))
+    return nms(candidates)
+
+
 class ThermalInferenceEngine:
     """
     High-level API for running inference on thermal frames.
@@ -172,39 +221,28 @@ class ThermalInferenceEngine:
         img_tensor, _ = self.preprocessor.process(
             image_rgb, image_thermal, [], [], img_size=(h_orig, w_orig), augment=False
         )
-        img_tensor = img_tensor.to(self.device)
+        img_tensor = img_tensor.unsqueeze(0).to(self.device)
 
         # 2. Forward pass
         with torch.no_grad():
             preds = self.model(img_tensor)
 
-        # 3. Global Classification Check (Is there ANY intrusion?)
-        cls_probs = torch.softmax(preds['label'], dim=1)[0].cpu().numpy()
-        pred_class_idx = np.argmax(cls_probs)
+        # 4. Extract boxes from both scales (objectness only; no classifier gate)
+        final_detections = decode_predictions(
+            preds['obj_small'][0], preds['bbox_small'][0],
+            preds['obj_large'][0], preds['bbox_large'][0],
+            anchor_sizes=self.anchor_sizes,
+        )
 
-        # If classifier says background, return empty (fast exit)
+        # 5. Classifier labels detections
+        cls_probs = torch.softmax(preds['label'], dim=1)[0].cpu().numpy()
+        pred_class_idx = int(np.argmax(cls_probs))
         if pred_class_idx == CLASS_MAP['background']:
             return []
 
-        # 4. Extract boxes from both scales
-        candidates = []
-        small_grid_w, small_grid_h = INPUT_WIDTH // 8, INPUT_HEIGHT // 8
-        large_grid_w, large_grid_h = INPUT_WIDTH // 16, INPUT_HEIGHT // 16
-
-        candidates.extend(self._extract_candidates(
-            preds['obj_small'][0], preds['bbox_small'][0], small_grid_w, small_grid_h
-        ))
-        candidates.extend(self._extract_candidates(
-            preds['obj_large'][0], preds['bbox_large'][0], large_grid_w, large_grid_h
-        ))
-
-        # 5. Apply Non-Maximum Suppression
-        final_detections = nms(candidates)
-
-        # Add class info from classifier
         detected_class_name = INV_CLASS_MAP.get(pred_class_idx, "unknown")
         class_conf = float(cls_probs[pred_class_idx])
-        
+
         for det in final_detections:
             det['class'] = detected_class_name
             # Blend objectness conf with global classifier conf
