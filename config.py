@@ -131,7 +131,7 @@ LARGE_GRID_H = INPUT_HEIGHT // 16   # 8
 LARGE_GRID_W = INPUT_WIDTH // 16    # 10
 
 # Detection thresholds
-CONFIDENCE_THRESHOLD = 0.25     # Lower for small-model objectness scores
+CONFIDENCE_THRESHOLD = 0.15     # Lower for small-model objectness scores
 OBJ_METRIC_THRESHOLD = 0.25     # Threshold when computing objectness recall
 NMS_IOU_THRESHOLD = 0.45        # Non-Maximum Suppression IoU threshold
 MAX_DETECTIONS = 10             # Max simultaneous detections per frame
