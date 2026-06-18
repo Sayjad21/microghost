@@ -17,7 +17,9 @@ from preprocessing import ThermalPreprocessor
 from config import (
     INPUT_SIZE, INPUT_WIDTH, INPUT_HEIGHT, CLASS_MAP, NUM_CLASSES, NUM_ANCHORS,
     DEFAULT_ANCHOR_SIZES, CONFIDENCE_THRESHOLD, NMS_IOU_THRESHOLD,
-    MAX_DETECTIONS, DEVICE, ESP32_S3, ALERT_CONFIG, CLASSIFIER_HIDDEN_DIM
+    MAX_DETECTIONS, DEVICE, ESP32_S3, ALERT_CONFIG, CLASSIFIER_HIDDEN_DIM,
+    MIN_BOX_WIDTH_NORM, MIN_BOX_HEIGHT_NORM, MIN_BOX_AREA_NORM,
+    CORNER_FILTER_X, CORNER_FILTER_Y, CORNER_MAX_WIDTH,
 )
 
 # Inverse class map for alert generation
@@ -98,6 +100,36 @@ def nms(detections, iou_threshold=NMS_IOU_THRESHOLD):
     return keep[:MAX_DETECTIONS]
 
 
+def filter_spurious_detections(detections):
+    """
+    Remove tiny boxes and top-left corner artifacts from grid decode clamping.
+
+    Corner boxes appear when cell (0,0) fires with tall anchors: decoded centers
+    near the origin get clamped to x1≈0, y1≈0, producing thin vertical strips.
+    """
+    kept = []
+    for det in detections:
+        x1, y1, x2, y2 = det['bbox']
+        bw = x2 - x1
+        bh = y2 - y1
+        area = bw * bh
+
+        if bw < MIN_BOX_WIDTH_NORM or bh < MIN_BOX_HEIGHT_NORM:
+            continue
+        if area < MIN_BOX_AREA_NORM:
+            continue
+
+        # Top-left corner artifact band
+        if x1 < CORNER_FILTER_X and y1 < CORNER_FILTER_Y and bw < CORNER_MAX_WIDTH:
+            continue
+        # Stuck on top edge from coordinate clamping
+        if y1 <= 0.001 and x1 < 0.15:
+            continue
+
+        kept.append(det)
+    return kept
+
+
 def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
                        anchor_sizes=None, conf_threshold=None):
     """
@@ -144,6 +176,7 @@ def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
     candidates = []
     candidates.extend(_extract(obj_small, bbox_small, small_grid_w, small_grid_h))
     candidates.extend(_extract(obj_large, bbox_large, large_grid_w, large_grid_h))
+    candidates = filter_spurious_detections(candidates)
     return nms(candidates)
 
 

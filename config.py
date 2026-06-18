@@ -114,6 +114,7 @@ NUM_CLASSES = len(CLASS_MAP)  # 4: background + 3 intrusion types
 
 # Anchor configuration (optimized for human thermal signatures)
 NUM_ANCHORS = 2  # Reduced from 3 — fewer target shape types needed
+# Next retrain for bike/scooter riders: NUM_ANCHORS=3, ratios=[1.6, 2.5, 3.5]
 
 # Default anchor aspect ratios (h/w) for human shapes in thermal
 # - Standing person at distance: tall, narrow (~0.5 w/h ratio → 2.0 h/w)
@@ -134,6 +135,14 @@ CONFIDENCE_THRESHOLD = 0.25     # Lower for small-model objectness scores
 OBJ_METRIC_THRESHOLD = 0.25     # Threshold when computing objectness recall
 NMS_IOU_THRESHOLD = 0.45        # Non-Maximum Suppression IoU threshold
 MAX_DETECTIONS = 10             # Max simultaneous detections per frame
+
+# Post-decode filters (remove corner artifacts and tiny false positives)
+MIN_BOX_WIDTH_NORM = 0.03       # Min box width relative to image
+MIN_BOX_HEIGHT_NORM = 0.05      # Min box height relative to image
+MIN_BOX_AREA_NORM = 0.002       # Min box area (width * height)
+CORNER_FILTER_X = 0.12          # Reject thin boxes in top-left corner band
+CORNER_FILTER_Y = 0.10
+CORNER_MAX_WIDTH = 0.10         # Corner band only applies below this width
 
 # ============================================================================
 # MODEL ARCHITECTURE CONFIGURATION

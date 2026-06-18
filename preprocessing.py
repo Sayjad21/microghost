@@ -190,8 +190,8 @@ class ThermalAugmentor:
                     translate_percent={'x': (-0.1, 0.1), 'y': (-0.1, 0.1)},
                     scale=(0.85, 1.15),
                     rotate=(-12, 12),
-                    mode=cv2.BORDER_CONSTANT,
-                    cval=0,
+                    border_mode=cv2.BORDER_CONSTANT,
+                    fill=0,
                     p=0.6,
                 ),
                 A.RandomBrightnessContrast(
