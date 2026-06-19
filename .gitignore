@@ -7,3 +7,4 @@ exports/
 logs/
 training_history.png
 confusion_matrix.png
+outputnote.txt
