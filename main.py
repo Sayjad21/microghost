@@ -32,6 +32,7 @@ def parse_args():
                               help='Override dataset directory (default: data/<dataset>/)')
     train_parser.add_argument('--epochs', type=int, default=None, help='Override config epochs')
     train_parser.add_argument('--batch-size', type=int, default=None, help='Override config batch size')
+    train_parser.add_argument('--num-workers', type=int, default=None, help='Override config num workers (CPU scaling)')
     train_parser.add_argument('--no-kmeans', action='store_true', help='Skip K-Means anchor optimization')
 
     # Evaluate
@@ -83,7 +84,8 @@ def main():
             dataset_name=args.dataset,
             preprocessor=preprocessor,
             dataset_root=dataset_root,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
+            num_workers=args.num_workers
         )
 
         # 3. K-Means Anchor Optimization
@@ -96,7 +98,8 @@ def main():
                 dataset_name=args.dataset,
                 dataset_root=dataset_root,
                 preprocessor=preprocessor,
-                batch_size=args.batch_size
+                batch_size=args.batch_size,
+                num_workers=args.num_workers
             )
         else:
             opt_sizes = None

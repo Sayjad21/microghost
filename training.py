@@ -15,6 +15,8 @@ import os
 import math
 import time
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Headless backend for Kaggle compatibility
 import torch
 import torch.nn as nn
 from collections import defaultdict
@@ -709,7 +711,7 @@ def plot_training_history(history, save_path='training_history.png'):
                  fontweight='bold')
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.show()
+    plt.close()
     print(f"  📊 Saved training history to {save_path}")
 
 
@@ -727,7 +729,7 @@ def plot_confusion_matrix(cm, save_path='confusion_matrix.png'):
     plt.title('Intrusion Detection — Confusion Matrix')
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.show()
+    plt.close()
     print(f"  📊 Saved confusion matrix to {save_path}")
 
 
