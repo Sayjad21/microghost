@@ -20,6 +20,7 @@ matplotlib.use('Agg')  # Headless backend for Kaggle compatibility
 import torch
 import torch.nn as nn
 from collections import defaultdict
+from tqdm import tqdm
 
 from config import (
     INPUT_SIZE, INPUT_WIDTH, INPUT_HEIGHT, NUM_CLASSES, NUM_ANCHORS,
@@ -502,7 +503,8 @@ class Trainer:
         self.model.train()
         self.train_metrics.reset()
 
-        for images, targets in self.train_loader:
+        pbar = tqdm(self.train_loader, desc='  Training', leave=False)
+        for images, targets in pbar:
             images = images.to(self.device)
             targets = {k: v.to(self.device) for k, v in targets.items()}
 
@@ -516,6 +518,7 @@ class Trainer:
             self.optimizer.step()
 
             self.train_metrics.update(predictions, targets, losses)
+            pbar.set_postfix({'loss': f"{losses['total'].item():.3f}"})
 
         return self.train_metrics.compute()
 
@@ -525,13 +528,15 @@ class Trainer:
         self.model.eval()
         self.val_metrics.reset()
 
-        for images, targets in self.val_loader:
+        pbar = tqdm(self.val_loader, desc='  Validation', leave=False)
+        for images, targets in pbar:
             images = images.to(self.device)
             targets = {k: v.to(self.device) for k, v in targets.items()}
 
             predictions = self.model(images)
             losses = self.criterion(predictions, targets)
             self.val_metrics.update(predictions, targets, losses)
+            pbar.set_postfix({'loss': f"{losses['total'].item():.3f}"})
 
         return self.val_metrics.compute()
 
