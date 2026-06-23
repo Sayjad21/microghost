@@ -14,6 +14,7 @@ Components:
 import os
 import math
 import time
+import psutil
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Headless backend for Kaggle compatibility
@@ -434,6 +435,20 @@ class MetricsTracker:
         )
 
 
+def print_kaggle_system_stats():
+    """Prints live CPU RAM and GPU VRAM usage."""
+    ram_percent = psutil.virtual_memory().percent
+    ram_used_gb = psutil.virtual_memory().used / (1024**3)
+    
+    gpu_stats = ""
+    if torch.cuda.is_available():
+        vram_allocated = torch.cuda.memory_allocated() / (1024**2)
+        vram_reserved = torch.cuda.memory_reserved() / (1024**2)
+        gpu_stats = f" | GPU VRAM Allocated: {vram_allocated:.1f} MB | Reserved: {vram_reserved:.1f} MB"
+        
+    print(f"💻 System Check -> CPU RAM: {ram_used_gb:.1f} GB ({ram_percent}%){gpu_stats}")
+
+
 # ============================================================================
 # 4. TRAINER
 # ============================================================================
@@ -597,6 +612,8 @@ class Trainer:
 
             self.no_improve_count = 0 if improved else \
                 self.no_improve_count + 1
+
+            print_kaggle_system_stats()
 
             # Print progress
             elapsed = time.time() - t0

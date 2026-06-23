@@ -112,6 +112,19 @@ def main():
 
         # 4. Model & Trainer
         model = MicroGhostThermal()
+
+        # --- TARGET HARDWARE PROFILING (ESP32-S3) ---
+        print("\n" + "="*60)
+        print("  TARGET HARDWARE PROFILING (ESP32-S3)")
+        print("="*60)
+        from model import print_model_analysis
+        from inference import benchmark_model
+        
+        print_model_analysis(model)
+        benchmark_model(model)
+        print("="*60 + "\n")
+        # --------------------------------------------
+
         trainer = Trainer(
             model=model,
             train_loader=train_loader,
