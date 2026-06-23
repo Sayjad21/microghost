@@ -73,10 +73,18 @@ class LLVIPDataset(Dataset):
         self.split = split
         self.verbose = verbose
 
-        # Build paths
+        # Build paths (robust to Kaggle auto-lowercasing)
         self.image_dir_thermal = os.path.join(root_dir, 'infrared', split)
+        if not os.path.exists(self.image_dir_thermal):
+            self.image_dir_thermal = os.path.join(root_dir, 'Infrared', split)
+
         self.image_dir_rgb = os.path.join(root_dir, 'visible', split)
+        if not os.path.exists(self.image_dir_rgb):
+            self.image_dir_rgb = os.path.join(root_dir, 'Visible', split)
+
         self.annot_dir = os.path.join(root_dir, 'Annotations')
+        if not os.path.exists(self.annot_dir):
+            self.annot_dir = os.path.join(root_dir, 'annotations')
 
         # Error tracking
         self.xml_errors = []
