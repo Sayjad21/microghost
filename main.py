@@ -46,6 +46,12 @@ def parse_args():
     eval_parser.add_argument('--limit', type=int, default=None,
                              help='Evaluate only first N val images (quick test)')
 
+    # Diagnose
+    diagnose_parser = subparsers.add_parser('diagnose', help='Run deep error profiling and save images')
+    diagnose_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET,
+                                 choices=['llvip', 'kaist', 'flirv2'])
+    diagnose_parser.add_argument('--data-root', type=str, default=None)
+
     # Infer
     infer_parser = subparsers.add_parser('infer', help='Run inference on an image')
     infer_parser.add_argument('--image-rgb', type=str, required=True, help='Path to RGB image')
@@ -171,6 +177,11 @@ def main():
             conf_threshold=args.conf_threshold,
             limit=args.limit,
         )
+
+    elif args.mode == 'diagnose':
+        from diagnose import run_visual_diagnostics
+        dataset_root = args.data_root or get_dataset_path(args.dataset)
+        run_visual_diagnostics(dataset_name=args.dataset, dataset_root=dataset_root)
 
     else:
         print("Please specify a mode. Use --help for options.")
