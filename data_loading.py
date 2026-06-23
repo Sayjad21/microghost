@@ -504,17 +504,19 @@ class ThermalIntrusionDataset(Dataset):
     This is the Dataset that DataLoaders consume.
     """
 
-    def __init__(self, base_dataset, preprocessor, augment=False, verbose=True):
+    def __init__(self, base_dataset, preprocessor, augment=False, negative_injection_prob=0.1, verbose=True):
         """
         Args:
             base_dataset: An LLVIPDataset, KAISTDataset, or similar
             preprocessor: A ThermalPreprocessor instance (from preprocessing.py)
             augment: Whether to apply training augmentations
+            negative_injection_prob: Probability to inject a synthetic empty frame to provide true negatives
             verbose: Print loading statistics
         """
         self.base_dataset = base_dataset
         self.preprocessor = preprocessor
         self.augment = augment
+        self.negative_injection_prob = negative_injection_prob
         self.verbose = verbose
 
     def __len__(self):
@@ -526,7 +528,27 @@ class ThermalIntrusionDataset(Dataset):
             img_tensor: (4, H, W) float tensor (3 RGB + 1 Thermal), normalized
             targets: dict with grid-encoded detection targets
         """
-        (image_rgb, image_thermal), annotations, (h_orig, w_orig) = self.base_dataset[idx]
+        # Inject synthetic empty background frames to provide True Negatives
+        # This prevents the F1 score from being a 100% illusion on datasets like LLVIP
+        # where nearly every single frame has a pedestrian.
+        # Use pseudo-randomness for validation so it remains deterministic
+        inject_neg = False
+        if self.negative_injection_prob > 0:
+            if self.augment:
+                inject_neg = np.random.random() < self.negative_injection_prob
+            else:
+                inject_neg = ((idx * 2654435761 % 100) / 100.0) < self.negative_injection_prob
+
+        if inject_neg:
+            h_orig, w_orig = 512, 640 # Standardize size for synthetic frame
+            image_rgb = np.zeros((h_orig, w_orig, 3), dtype=np.uint8)
+            # Create a noisy thermal background simulating ambient sensor reading
+            base_temp = np.random.randint(20, 60)
+            noise = np.random.normal(0, 3, (h_orig, w_orig))
+            image_thermal = np.clip(base_temp + noise, 0, 255).astype(np.uint8)
+            annotations = []
+        else:
+            (image_rgb, image_thermal), annotations, (h_orig, w_orig) = self.base_dataset[idx]
 
         # Convert annotations to pascal_voc format for augmentation
         bboxes_pascal = []

@@ -119,13 +119,6 @@ def filter_spurious_detections(detections):
         if area < MIN_BOX_AREA_NORM:
             continue
 
-        # Top-left corner artifact band
-        if x1 < CORNER_FILTER_X and y1 < CORNER_FILTER_Y and bw < CORNER_MAX_WIDTH:
-            continue
-        # Stuck on top edge from coordinate clamping
-        if y1 <= 0.001 and x1 < 0.15:
-            continue
-
         kept.append(det)
     return kept
 

@@ -229,9 +229,13 @@ class ThermalAugmentor:
                 return result['image'], result['image_thermal'], result['bboxes'], result['labels']
             except Exception as e:
                 # Fallback to simple resize
+                h_orig, w_orig = image_rgb.shape[:2]
                 image_rgb = cv2.resize(image_rgb, (self.input_w, self.input_h))
                 image_thermal = cv2.resize(image_thermal, (self.input_w, self.input_h))
-                return image_rgb, image_thermal, bboxes, labels
+                scale_x = self.input_w / w_orig
+                scale_y = self.input_h / h_orig
+                scaled_bboxes = [[b[0]*scale_x, b[1]*scale_y, b[2]*scale_x, b[3]*scale_y] for b in bboxes]
+                return image_rgb, image_thermal, scaled_bboxes, labels
         else:
             return self._manual_augment(image_rgb, image_thermal, bboxes, labels)
 
@@ -243,13 +247,21 @@ class ThermalAugmentor:
                 )
                 return result['image'], result['image_thermal'], result['bboxes'], result['labels']
             except Exception as e:
+                h_orig, w_orig = image_rgb.shape[:2]
                 image_rgb = cv2.resize(image_rgb, (self.input_w, self.input_h))
                 image_thermal = cv2.resize(image_thermal, (self.input_w, self.input_h))
-                return image_rgb, image_thermal, bboxes, labels
+                scale_x = self.input_w / w_orig
+                scale_y = self.input_h / h_orig
+                scaled_bboxes = [[b[0]*scale_x, b[1]*scale_y, b[2]*scale_x, b[3]*scale_y] for b in bboxes]
+                return image_rgb, image_thermal, scaled_bboxes, labels
         else:
+            h_orig, w_orig = image_rgb.shape[:2]
             image_rgb = cv2.resize(image_rgb, (self.input_w, self.input_h))
             image_thermal = cv2.resize(image_thermal, (self.input_w, self.input_h))
-            return image_rgb, image_thermal, bboxes, labels
+            scale_x = self.input_w / w_orig
+            scale_y = self.input_h / h_orig
+            scaled_bboxes = [[b[0]*scale_x, b[1]*scale_y, b[2]*scale_x, b[3]*scale_y] for b in bboxes]
+            return image_rgb, image_thermal, scaled_bboxes, labels
 
     def _manual_augment(self, image_rgb, image_thermal, bboxes, labels):
         h, w = image_rgb.shape[:2]
@@ -273,7 +285,12 @@ class ThermalAugmentor:
 
         image_rgb = cv2.resize(image_rgb, (self.input_w, self.input_h))
         image_thermal = cv2.resize(image_thermal, (self.input_w, self.input_h))
-        return image_rgb, image_thermal, bboxes, labels
+        
+        scale_x = self.input_w / w
+        scale_y = self.input_h / h
+        scaled_bboxes = [[b[0]*scale_x, b[1]*scale_y, b[2]*scale_x, b[3]*scale_y] for b in bboxes]
+        
+        return image_rgb, image_thermal, scaled_bboxes, labels
 
 
 # ============================================================================
@@ -382,13 +399,7 @@ class ThermalPreprocessor:
         for bbox, lbl in zip(bboxes_pascal, labels):
             xmin, ymin, xmax, ymax = bbox
 
-            # Scale bboxes if image was resized from original
-            if h_orig != h_new or w_orig != w_new:
-                scale_x = w_new / w_orig
-                scale_y = h_new / h_orig
-                xmin, xmax = xmin * scale_x, xmax * scale_x
-                ymin, ymax = ymin * scale_y, ymax * scale_y
-
+            # bboxes_pascal are already scaled to (w_new, h_new) by ThermalAugmentor
             cx = ((xmin + xmax) / 2) / w_new
             cy = ((ymin + ymax) / 2) / h_new
             w = (xmax - xmin) / w_new
