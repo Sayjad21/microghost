@@ -221,6 +221,15 @@ class ThermalAugmentor:
             print("   Install: pip install albumentations")
 
     def augment_train(self, image_rgb, image_thermal, bboxes, labels):
+        # --- Symmetric Modality Dropout ---
+        # 15% chance to drop Thermal (force RGB learning)
+        # 5% chance to drop RGB (force Thermal learning in "pitch black")
+        rand_val = np.random.random()
+        if rand_val < 0.15:
+            image_thermal = np.zeros_like(image_thermal)
+        elif rand_val < 0.20:  # 0.15 to 0.20 is a 5% window
+            image_rgb = np.zeros_like(image_rgb)
+            
         if self.use_albumentations and bboxes:
             try:
                 result = self.train_transform(

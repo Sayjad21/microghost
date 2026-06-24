@@ -227,6 +227,45 @@ class CIoUBBoxLoss(nn.Module):
 # 2. COMBINED LOSS
 # ============================================================================
 
+class OHEMBCEWithLogitsLoss(nn.Module):
+    """
+    Online Hard Example Mining (OHEM) for Objectness BCE Loss.
+    Maintains a 1:3 ratio of positive to hard-negative samples.
+    This naturally penalizes 'hot bonnet' false positives by dynamically
+    mining the background cells with the highest loss.
+    """
+    def __init__(self, pos_ratio=3.0):
+        super().__init__()
+        self.pos_ratio = pos_ratio
+
+    def forward(self, pred, target):
+        # unreduced loss: (B, A, H, W)
+        loss = F.binary_cross_entropy_with_logits(pred, target, reduction='none')
+        
+        # Flatten
+        loss = loss.view(-1)
+        target = target.view(-1)
+        
+        pos_mask = target > 0.5
+        num_pos = pos_mask.sum().item()
+        
+        if num_pos == 0:
+            # If no positives, just backprop the worst N negatives
+            num_neg = min(100, loss.shape[0]) 
+            loss, _ = torch.topk(loss, num_neg)
+            return loss.mean()
+            
+        num_neg = min(int(num_pos * self.pos_ratio), loss.shape[0] - num_pos)
+        
+        pos_loss = loss[pos_mask]
+        neg_loss = loss[~pos_mask]
+        
+        if num_neg > 0 and len(neg_loss) > 0:
+            neg_loss, _ = torch.topk(neg_loss, min(num_neg, len(neg_loss)))
+            return (pos_loss.sum() + neg_loss.sum()) / (num_pos + num_neg)
+        else:
+            return pos_loss.mean()
+
 class MicroGhostThermalLoss(nn.Module):
     """
     Combined loss for thermal intrusion detection.
@@ -252,7 +291,7 @@ class MicroGhostThermalLoss(nn.Module):
         self.large_grid_h = INPUT_HEIGHT // 16
 
         self.bbox_loss = CIoUBBoxLoss(anchor_sizes=anchor_sizes)
-        self.obj_loss = nn.BCEWithLogitsLoss(reduction='mean')
+        self.obj_loss = OHEMBCEWithLogitsLoss(pos_ratio=3.0)
         self.cls_loss = nn.CrossEntropyLoss(reduction='mean')
 
     def forward(self, predictions, targets):

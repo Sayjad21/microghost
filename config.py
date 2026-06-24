@@ -112,17 +112,17 @@ CLASS_MAP = {
 }
 NUM_CLASSES = len(CLASS_MAP)  # 4: background + 3 intrusion types
 
-# Anchor configuration (optimized for human thermal signatures)
-NUM_ANCHORS = 2  # Reduced from 3 — fewer target shape types needed
-# Next retrain for bike/scooter riders: NUM_ANCHORS=3, ratios=[1.6, 2.5, 3.5]
+# Anchor configuration (optimized for human thermal signatures and side-by-side)
+NUM_ANCHORS = 3
 
 # Default anchor aspect ratios (h/w) for human shapes in thermal
-# - Standing person at distance: tall, narrow (~0.5 w/h ratio → 2.0 h/w)
-# - Crouching/close person: roughly square (~1.0 h/w)
-DEFAULT_ANCHOR_RATIOS = [2.3, 3.5]   # LLVIP pedestrians: median h/w ≈ 2.93
+# 1.2: Scooter drivers / grouped humans
+# 2.3: Standing/walking close
+# 3.5: Standing distant
+DEFAULT_ANCHOR_RATIOS = [1.2, 2.3, 3.5]
 
 # Default anchor sizes (relative to image, sqrt of area)
-DEFAULT_ANCHOR_SIZES = [0.108, 0.145]  # LLVIP: p25/p75 of sqrt(relative area)
+DEFAULT_ANCHOR_SIZES = [0.108, 0.145, 0.180]
 
 # Grid sizes derived from input height/width
 SMALL_GRID_H = INPUT_HEIGHT // 8    # 16
