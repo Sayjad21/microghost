@@ -210,7 +210,9 @@ class ThermalInferenceEngine:
         obj_probs = torch.sigmoid(obj_map).cpu().numpy()
         bbox_data = bbox_map.cpu().numpy()
 
-        for a in range(NUM_ANCHORS):
+        actual_num_anchors = obj_probs.shape[0]
+
+        for a in range(actual_num_anchors):
             # Find cells above threshold
             y_indices, x_indices = np.where(obj_probs[a] > CONFIDENCE_THRESHOLD)
 
