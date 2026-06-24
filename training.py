@@ -20,6 +20,7 @@ import matplotlib
 matplotlib.use('Agg')  # Headless backend for Kaggle compatibility
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from collections import defaultdict
 from tqdm import tqdm
 
