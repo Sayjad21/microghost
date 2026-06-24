@@ -73,7 +73,7 @@ def run_visual_diagnostics(dataset_name='llvip', dataset_root=None, output_dir='
         # 3. Save side-by-side snapshots for error patterns (e.g., mislocalizations or misses)
         has_error = (len(pred_pixels) != len(gt_pixels)) or (len(matched_gts) < len(gt_pixels))
         if has_error and idx < 50:  # Cap at 50 images to save disk space
-            save_diagnostic_plot(img_thermal, gt_pixels, pred_pixels, pred_confs, idx, output_dir)
+            save_diagnostic_plot(img_rgb, img_thermal, gt_boxes, pred_pixels, pred_confs, idx, output_dir)
 
     print("\n" + "="*40 + "\n  DETAILED ERROR PATTERN SUMMARY\n" + "="*40)
     for k, v in stats.items():
@@ -82,25 +82,41 @@ def run_visual_diagnostics(dataset_name='llvip', dataset_root=None, output_dir='
     print(f"✅ Diagnostic snapshots saved to: ./{output_dir}/")
 
 
-def save_diagnostic_plot(thermal_img, gt_boxes, pred_boxes, confs, index, output_dir):
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+def save_diagnostic_plot(rgb_img, thermal_img, gt_boxes, pred_boxes, confs, index, output_dir):
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    ((ax1, ax2), (ax3, ax4)) = axes
     
-    # Left: Ground Truth
-    ax1.imshow(thermal_img, cmap='inferno')
-    ax1.set_title("Ground Truth Annotations")
+    # --- Top Row: Ground Truth ---
+    ax1.imshow(rgb_img)
+    ax1.set_title("Ground Truth (RGB)")
     for box in gt_boxes:
         x1, y1, x2, y2 = box
         rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=False, edgecolor='cyan', linewidth=2)
         ax1.add_patch(rect)
         
-    # Right: Model Inference
     ax2.imshow(thermal_img, cmap='inferno')
-    ax2.set_title("Model Inference Predictions")
+    ax2.set_title("Ground Truth (Thermal)")
+    for box in gt_boxes:
+        x1, y1, x2, y2 = box
+        rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=False, edgecolor='cyan', linewidth=2)
+        ax2.add_patch(rect)
+
+    # --- Bottom Row: Model Inference ---
+    ax3.imshow(rgb_img)
+    ax3.set_title("Model Inference (RGB)")
     for box, conf in zip(pred_boxes, confs):
         x1, y1, x2, y2 = box
         rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=False, edgecolor='magenta', linewidth=2)
-        ax2.add_patch(rect)
-        ax2.text(x1, y1 - 4, f"{conf:.2f}", color='magenta', fontsize=9, weight='bold')
+        ax3.add_patch(rect)
+        ax3.text(x1, y1 - 4, f"{conf:.2f}", color='magenta', fontsize=9, weight='bold')
+
+    ax4.imshow(thermal_img, cmap='inferno')
+    ax4.set_title("Model Inference (Thermal)")
+    for box, conf in zip(pred_boxes, confs):
+        x1, y1, x2, y2 = box
+        rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=False, edgecolor='magenta', linewidth=2)
+        ax4.add_patch(rect)
+        ax4.text(x1, y1 - 4, f"{conf:.2f}", color='magenta', fontsize=9, weight='bold')
         
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f"error_frame_{index:04d}.png"), dpi=150)
