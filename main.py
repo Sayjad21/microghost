@@ -11,7 +11,7 @@ import numpy as np
 
 from config import (
     ACTIVE_DATASET, DATASET_ROOT, MODEL_SAVE_DIR, EXPORT_DIR, LOG_DIR,
-    BEST_MODEL_PATH, ONNX_PATH, TFLITE_FP16_PATH, get_dataset_path
+    BEST_MODEL_PATH, ONNX_PATH, TFLITE_FP16_PATH, get_dataset_path, NUM_ANCHORS
 )
 from data_loading import create_dataloaders
 from preprocessing import ThermalPreprocessor, analyze_dataset_anchors, GridEncoder
@@ -97,7 +97,7 @@ def main():
         # 3. K-Means Anchor Optimization
         if not args.no_kmeans:
             # We access the raw base dataset for K-Means
-            opt_ratios, opt_sizes = analyze_dataset_anchors(train_loader.dataset.base_dataset)
+            opt_ratios, opt_sizes = analyze_dataset_anchors(train_loader.dataset.base_dataset, num_anchors=NUM_ANCHORS)
             encoder.update_anchors(opt_ratios, opt_sizes)
             # Re-initialize dataloaders with updated encoder targets
             train_loader, val_loader = create_dataloaders(

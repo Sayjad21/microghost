@@ -30,8 +30,8 @@ INV_CLASS_MAP = {v: k for k, v in CLASS_MAP.items()}
 # 1. MODEL LOADING
 # ============================================================================
 
-def load_inference_model(model_path, device=DEVICE):
-    """Load PyTorch model for inference."""
+def load_inference_model(model_path, device=DEVICE, override_num_anchors=None):
+    """Load PyTorch model for inference, with backward-compatibility support."""
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
 
@@ -41,17 +41,21 @@ def load_inference_model(model_path, device=DEVICE):
     config = checkpoint.get('config', {})
     state_dict = checkpoint.get('model_state_dict', checkpoint)
 
+    # Use override if provided, else try config dict, else use default
+    anchors_to_use = override_num_anchors or config.get('num_anchors', NUM_ANCHORS)
+
     model = MicroGhostThermal(
         num_classes=config.get('num_classes', NUM_CLASSES),
         input_size=config.get('input_size', INPUT_SIZE),
-        classifier_hidden_dim=config.get('classifier_hidden_dim', CLASSIFIER_HIDDEN_DIM)
+        classifier_hidden_dim=config.get('classifier_hidden_dim', CLASSIFIER_HIDDEN_DIM),
+        num_anchors=anchors_to_use # CRITICAL FIX
     )
 
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
 
-    return model
+    return model, anchors_to_use
 
 
 # ============================================================================
@@ -174,21 +178,21 @@ def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
 
 
 class ThermalInferenceEngine:
-    """
-    High-level API for running inference on thermal frames.
-    Handles preprocessing, forward pass, decoding, and NMS.
-    """
-
-    def __init__(self, model_path=None, model=None, device=DEVICE):
+    def __init__(self, model_path=None, model=None, device=DEVICE, override_num_anchors=None):
         self.device = device
         self.preprocessor = ThermalPreprocessor()
-        self.anchor_sizes = DEFAULT_ANCHOR_SIZES
-
+        
         if model is not None:
             self.model = model.to(self.device)
             self.model.eval()
+            self.anchor_sizes = DEFAULT_ANCHOR_SIZES # Assuming current config for injected model
         elif model_path is not None:
-            self.model = load_inference_model(model_path, device)
+            self.model, anchors_used = load_inference_model(model_path, device, override_num_anchors)
+            # Adjust anchor sizes array length based on what the model was built with
+            if anchors_used == 2:
+                self.anchor_sizes = [0.108, 0.180] # Fallback V1 sizes
+            else:
+                self.anchor_sizes = DEFAULT_ANCHOR_SIZES
         else:
             raise ValueError("Must provide either model_path or model instance.")
 

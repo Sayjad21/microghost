@@ -438,7 +438,7 @@ class ThermalPreprocessor:
 # ANCHOR ANALYSIS UTILITIES
 # ============================================================================
 
-def analyze_dataset_anchors(dataset, num_anchors=2):
+def analyze_dataset_anchors(dataset, num_anchors=NUM_ANCHORS):
     """
     Run K-Means clustering on dataset bounding boxes to find
     optimal anchor ratios and sizes.
