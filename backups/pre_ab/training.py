@@ -20,15 +20,12 @@ import torch.nn as nn
 from collections import defaultdict
 
 from config import (
-    INPUT_SIZE, NUM_CLASSES, NUM_ANCHORS,
+    INPUT_SIZE, INPUT_WIDTH, INPUT_HEIGHT, NUM_CLASSES, NUM_ANCHORS,
     DEFAULT_ANCHOR_SIZES, CLASS_MAP, OBJ_METRIC_THRESHOLD,
     BBOX_WEIGHT, OBJ_WEIGHT, CLASS_WEIGHT,
-    USE_FOCAL_OBJECTNESS, FOCAL_ALPHA, FOCAL_GAMMA, POSITIVE_CELL_RADIUS,
-    BBOX_POSITIVE_THRESHOLD, NEIGHBOR_OBJECTNESS_TARGET,
     LEARNING_RATE, WEIGHT_DECAY, EPOCHS, PATIENCE,
-    LR_T0, LR_T_MULT, LR_MIN, CHECKPOINT_METRIC,
+    LR_T0, LR_T_MULT, LR_MIN,
     MODEL_SAVE_DIR, BEST_MODEL_PATH, LAST_MODEL_PATH, LOG_DIR, DEVICE,
-    grid_dims_for, resolve_input_size,
 )
 
 
@@ -65,33 +62,6 @@ def _iou_xyxy(boxes_a, boxes_b):
     area_b = (boxes_b[:, 2] - boxes_b[:, 0]) * (boxes_b[:, 3] - boxes_b[:, 1])
     union = area_a + area_b - inter + 1e-7
     return (inter / union).cpu().numpy()
-
-
-def freeze_backbone(model, freeze=True):
-    """Freeze stem/backbone/FPN; train detection heads + classifier only."""
-    backbone_prefixes = ('rgb_stem', 'thermal_stem', 'scale1', 'scale2', 'scale3', 'fpn')
-    n_frozen = n_train = 0
-    for name, param in model.named_parameters():
-        is_backbone = any(name.startswith(p) for p in backbone_prefixes)
-        if freeze and is_backbone:
-            param.requires_grad = False
-            n_frozen += param.numel()
-        else:
-            param.requires_grad = True
-            n_train += param.numel()
-    if freeze:
-        print(f"  Backbone frozen: {n_frozen:,} params | trainable: {n_train:,}")
-    return model
-
-
-def load_pretrained_weights(model, checkpoint_path, device=DEVICE):
-    """Load model weights from checkpoint (architecture must match)."""
-    import torch as _torch
-    print(f"Loading weights from {checkpoint_path}...")
-    checkpoint = _torch.load(checkpoint_path, map_location=device, weights_only=False)
-    state = checkpoint.get('model_state_dict', checkpoint)
-    model.load_state_dict(state)
-    return model
 
 
 # ============================================================================
@@ -167,23 +137,6 @@ def ciou_loss(pred_boxes, target_boxes, eps=1e-7):
     return (1 - ciou_val).mean()
 
 
-class FocalObjectnessLoss(nn.Module):
-    """Focal BCE for imbalanced grid objectness (Step B)."""
-
-    def __init__(self, alpha=None, gamma=None):
-        super().__init__()
-        self.alpha = alpha if alpha is not None else FOCAL_ALPHA
-        self.gamma = gamma if gamma is not None else FOCAL_GAMMA
-
-    def forward(self, logits, targets):
-        bce = nn.functional.binary_cross_entropy_with_logits(
-            logits, targets, reduction='none')
-        prob = torch.sigmoid(logits)
-        p_t = prob * targets + (1.0 - prob) * (1.0 - targets)
-        alpha_t = self.alpha * targets + (1.0 - self.alpha) * (1.0 - targets)
-        return (alpha_t * (1.0 - p_t).pow(self.gamma) * bce).mean()
-
-
 class CIoUBBoxLoss(nn.Module):
     """
     CIoU bounding box loss for grid-based detection.
@@ -221,7 +174,7 @@ class CIoUBBoxLoss(nn.Module):
 
         for b in range(batch_size):
             for a in range(num_anchors):
-                mask = obj_mask[b, a] >= BBOX_POSITIVE_THRESHOLD
+                mask = obj_mask[b, a] > 0.5
                 if not mask.any():
                     continue
 
@@ -289,17 +242,13 @@ class MicroGhostThermalLoss(nn.Module):
         self.obj_weight = obj_weight or OBJ_WEIGHT
         self.class_weight = class_weight or CLASS_WEIGHT
 
-        dims = grid_dims_for(input_size)
-        self.small_grid_w = dims['small_w']
-        self.small_grid_h = dims['small_h']
-        self.large_grid_w = dims['large_w']
-        self.large_grid_h = dims['large_h']
+        self.small_grid_w = INPUT_WIDTH // 8
+        self.small_grid_h = INPUT_HEIGHT // 8
+        self.large_grid_w = INPUT_WIDTH // 16
+        self.large_grid_h = INPUT_HEIGHT // 16
 
         self.bbox_loss = CIoUBBoxLoss(anchor_sizes=anchor_sizes)
-        if USE_FOCAL_OBJECTNESS:
-            self.obj_loss = FocalObjectnessLoss()
-        else:
-            self.obj_loss = nn.BCEWithLogitsLoss(reduction='mean')
+        self.obj_loss = nn.BCEWithLogitsLoss(reduction='mean')
         self.cls_loss = nn.CrossEntropyLoss(reduction='mean')
 
     def forward(self, predictions, targets):
@@ -358,15 +307,13 @@ class MetricsTracker:
     - Classification: binary intrusion F1 (background vs any intrusion)
     """
 
-    def __init__(self, num_classes=None, anchor_sizes=None, obj_threshold=None,
-                 input_size=None):
+    def __init__(self, num_classes=None, anchor_sizes=None, obj_threshold=None):
         self.num_classes = num_classes or NUM_CLASSES
         self.obj_threshold = obj_threshold or OBJ_METRIC_THRESHOLD
-        dims = grid_dims_for(input_size)
-        self.small_grid_w = dims['small_w']
-        self.small_grid_h = dims['small_h']
-        self.large_grid_w = dims['large_w']
-        self.large_grid_h = dims['large_h']
+        self.small_grid_w = INPUT_WIDTH // 8
+        self.small_grid_h = INPUT_HEIGHT // 8
+        self.large_grid_w = INPUT_WIDTH // 16
+        self.large_grid_h = INPUT_HEIGHT // 16
 
         if anchor_sizes is not None:
             self.anchor_sizes = torch.tensor(anchor_sizes, dtype=torch.float32)
@@ -401,7 +348,7 @@ class MetricsTracker:
 
                 for b in range(pred_bbox.shape[0]):
                     for a, anchor_size in enumerate(self.anchor_sizes):
-                        mask = tgt_obj[b, a] >= BBOX_POSITIVE_THRESHOLD
+                        mask = tgt_obj[b, a] > 0.5
                         if not mask.any():
                             continue
 
@@ -420,14 +367,10 @@ class MetricsTracker:
 
                         self.bbox_ious.extend(_iou_xyxy(pred_boxes, tgt_boxes))
 
-                        obj_scores = torch.sigmoid(pred_obj[b, a])
-                        obj_targets = tgt_obj[b, a]
-                        pos_mask = obj_targets >= NEIGHBOR_OBJECTNESS_TARGET
-                        if not pos_mask.any():
-                            continue
-                        self.obj_pos_total += pos_mask.sum().item()
+                        obj_scores = torch.sigmoid(pred_obj[b, a][mask])
+                        self.obj_pos_total += mask.sum().item()
                         self.obj_pos_detected += (
-                            obj_scores[pos_mask] > self.obj_threshold
+                            obj_scores > self.obj_threshold
                         ).sum().item()
 
     def update(self, predictions, targets, losses):
@@ -506,16 +449,15 @@ class Trainer:
 
     def __init__(self, model, train_loader, val_loader, device=None,
                  lr=None, weight_decay=None, epochs=None, patience=None,
-                 input_size=None, anchor_sizes=None, checkpoint_metric=None):
+                 input_size=None, anchor_sizes=None):
         self.device = device or DEVICE
         self.model = model.to(self.device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.epochs = epochs or EPOCHS
         self.patience = patience or PATIENCE
-        self.input_size = input_size or getattr(model, 'input_size', INPUT_SIZE)
+        self.input_size = input_size or INPUT_SIZE
         self.anchor_sizes = anchor_sizes
-        self.checkpoint_metric = checkpoint_metric or CHECKPOINT_METRIC
 
         # Loss function
         self.criterion = MicroGhostThermalLoss(
@@ -523,11 +465,11 @@ class Trainer:
             input_size=self.input_size,
         )
 
-        # Optimizer — only parameters that require grad
+        # Optimizer
         lr = lr or LEARNING_RATE
         wd = weight_decay or WEIGHT_DECAY
-        params = [p for p in model.parameters() if p.requires_grad]
-        self.optimizer = torch.optim.AdamW(params, lr=lr, weight_decay=wd)
+        self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr,
+                                            weight_decay=wd)
 
         # LR scheduler
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
@@ -535,16 +477,11 @@ class Trainer:
         )
 
         # Metrics
-        self.train_metrics = MetricsTracker(
-            anchor_sizes=anchor_sizes, input_size=self.input_size,
-        )
-        self.val_metrics = MetricsTracker(
-            anchor_sizes=anchor_sizes, input_size=self.input_size,
-        )
+        self.train_metrics = MetricsTracker(anchor_sizes=anchor_sizes)
+        self.val_metrics = MetricsTracker(anchor_sizes=anchor_sizes)
 
-        # Best model tracking
+        # Best model tracking (checkpoint saved on lowest val loss)
         self.best_val_loss = float('inf')
-        self.best_val_bbox_iou = 0.0
         self.best_epoch = 0
         self.no_improve_count = 0
 
@@ -608,13 +545,6 @@ class Trainer:
         print(f"  Epochs:       {self.epochs} (patience={self.patience})")
         print(f"  Train:        {len(self.train_loader)} batches")
         print(f"  Validation:   {len(self.val_loader)} batches")
-        print(f"  Anchors/cell: {NUM_ANCHORS}")
-        print(f"  Pos radius:   {POSITIVE_CELL_RADIUS} "
-              f"(center=1.0 bbox, neighbors={NEIGHBOR_OBJECTNESS_TARGET} obj only)")
-        print(f"  Obj loss:     {'focal' if USE_FOCAL_OBJECTNESS else 'bce'}"
-              f"{f' (α={FOCAL_ALPHA}, γ={FOCAL_GAMMA})' if USE_FOCAL_OBJECTNESS else ''}")
-        print(f"  Checkpoint:   {self.checkpoint_metric}")
-        print(f"  Input size:   {self.input_size}")
         print("=" * 70)
 
         for epoch in range(self.epochs):
@@ -645,21 +575,12 @@ class Trainer:
                 val_m.get('intrusion_f1', 0))
             self.history['lr'].append(lr)
 
-            # Save best checkpoint (bbox IoU primary, val loss fallback)
+            # Save best checkpoint on val loss; always keep latest epoch weights
             improved = False
             val_loss = val_m['loss_total']
-            val_iou = val_m.get('bbox_iou', 0.0)
 
-            if self.checkpoint_metric == 'bbox_iou':
-                if val_iou > self.best_val_bbox_iou + 1e-4:
-                    self.best_val_bbox_iou = val_iou
-                    self.best_val_loss = val_loss
-                    self.best_epoch = epoch
-                    improved = True
-                    self._save_checkpoint(save_path, epoch, val_m)
-            elif val_loss < self.best_val_loss:
+            if val_loss < self.best_val_loss:
                 self.best_val_loss = val_loss
-                self.best_val_bbox_iou = val_iou
                 self.best_epoch = epoch
                 improved = True
                 self._save_checkpoint(save_path, epoch, val_m)
@@ -693,7 +614,6 @@ class Trainer:
         print("  TRAINING COMPLETE")
         print("=" * 70)
         print(f"  Best Epoch:   {self.best_epoch + 1}")
-        print(f"  Best Val IoU: {self.best_val_bbox_iou:.4f}")
         print(f"  Best Val Loss:{self.best_val_loss:.4f}")
         print(f"  Best saved:   {save_path}")
         print(f"  Last saved:   {LAST_MODEL_PATH}")
@@ -821,7 +741,6 @@ if __name__ == '__main__':
     model = MicroGhostThermal()
     loss_fn = MicroGhostThermalLoss()
 
-    from config import INPUT_WIDTH, INPUT_HEIGHT
     small_grid_w = INPUT_WIDTH // 8
     small_grid_h = INPUT_HEIGHT // 8
     large_grid_w = INPUT_WIDTH // 16

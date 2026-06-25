@@ -18,9 +18,8 @@ import numpy as np
 from config import (
     INPUT_SIZE, INPUT_CHANNELS, NUM_CLASSES, NUM_ANCHORS,
     DEFAULT_ANCHOR_RATIOS, DEFAULT_ANCHOR_SIZES,
-    INPUT_WIDTH, INPUT_HEIGHT, POSITIVE_CELL_RADIUS,
-    CENTER_OBJECTNESS_TARGET, NEIGHBOR_OBJECTNESS_TARGET,
-    resolve_input_size, grid_dims_for,
+    SMALL_GRID_W, SMALL_GRID_H, LARGE_GRID_W, LARGE_GRID_H,
+    INPUT_WIDTH, INPUT_HEIGHT
 )
 
 
@@ -47,16 +46,8 @@ class GridEncoder:
     - label      (scalar): 0=background, 1=intrusion (dominant target)
     """
 
-    def __init__(self, num_anchors=None, anchor_ratios=None, anchor_sizes=None,
-                 input_size=None):
+    def __init__(self, num_anchors=None, anchor_ratios=None, anchor_sizes=None):
         self.num_anchors = num_anchors or NUM_ANCHORS
-        self.positive_radius = POSITIVE_CELL_RADIUS
-        self.input_h, self.input_w = resolve_input_size(input_size)
-        dims = grid_dims_for((self.input_h, self.input_w))
-        self.small_grid_h = dims['small_h']
-        self.small_grid_w = dims['small_w']
-        self.large_grid_h = dims['large_h']
-        self.large_grid_w = dims['large_w']
 
         if anchor_ratios is not None:
             self.ratios = torch.tensor(anchor_ratios, dtype=torch.float32)
@@ -95,13 +86,13 @@ class GridEncoder:
         """
         targets = {
             'bbox_small': torch.zeros(self.num_anchors * 4,
-                                      self.small_grid_h, self.small_grid_w),
+                                      SMALL_GRID_H, SMALL_GRID_W),
             'obj_small': torch.zeros(self.num_anchors,
-                                     self.small_grid_h, self.small_grid_w),
+                                     SMALL_GRID_H, SMALL_GRID_W),
             'bbox_large': torch.zeros(self.num_anchors * 4,
-                                      self.large_grid_h, self.large_grid_w),
+                                      LARGE_GRID_H, LARGE_GRID_W),
             'obj_large': torch.zeros(self.num_anchors,
-                                     self.large_grid_h, self.large_grid_w),
+                                     LARGE_GRID_H, LARGE_GRID_W),
             'label': torch.tensor(0).long(),  # Default: background
         }
 
@@ -128,48 +119,37 @@ class GridEncoder:
 
             for scale in scale_assignments:
                 if scale == 'small':
-                    grid_w, grid_h = self.small_grid_w, self.small_grid_h
+                    grid_w, grid_h = SMALL_GRID_W, SMALL_GRID_H
                     key_bbox = 'bbox_small'
                     key_obj = 'obj_small'
                 else:
-                    grid_w, grid_h = self.large_grid_w, self.large_grid_h
+                    grid_w, grid_h = LARGE_GRID_W, LARGE_GRID_H
                     key_bbox = 'bbox_large'
                     key_obj = 'obj_large'
 
-                center_x = min(int(cx * grid_w), grid_w - 1)
-                center_y = min(int(cy * grid_h), grid_h - 1)
+                # Grid cell
+                grid_x = min(int(cx * grid_w), grid_w - 1)
+                grid_y = min(int(cy * grid_h), grid_h - 1)
 
+                # Best anchor (match aspect ratio)
                 box_ratio = h / (w + 1e-6)
                 ratio_diffs = torch.abs(self.ratios - box_ratio)
                 anchor_idx = torch.argmin(ratio_diffs).item()
+
+                # Fill objectness
+                targets[key_obj][anchor_idx, grid_y, grid_x] = 1.0
+
+                # Fill bbox (log-space for w, h)
                 anchor_size = self.anchor_sizes[anchor_idx].item()
                 off = anchor_idx * 4
-
-                # A: center cell = full target; neighbors = soft objectness only
-                for dy in range(-self.positive_radius, self.positive_radius + 1):
-                    for dx in range(-self.positive_radius, self.positive_radius + 1):
-                        grid_x = center_x + dx
-                        grid_y = center_y + dy
-                        if grid_x < 0 or grid_x >= grid_w or grid_y < 0 or grid_y >= grid_h:
-                            continue
-
-                        is_center = (dx == 0 and dy == 0)
-                        if is_center:
-                            targets[key_obj][anchor_idx, grid_y, grid_x] = \
-                                CENTER_OBJECTNESS_TARGET
-                            targets[key_bbox][off + 0, grid_y, grid_x] = \
-                                (cx * grid_w) - grid_x
-                            targets[key_bbox][off + 1, grid_y, grid_x] = \
-                                (cy * grid_h) - grid_y
-                            targets[key_bbox][off + 2, grid_y, grid_x] = \
-                                torch.log(torch.tensor(w / anchor_size + 1e-6)).clamp(-3, 3)
-                            targets[key_bbox][off + 3, grid_y, grid_x] = \
-                                torch.log(torch.tensor(h / anchor_size + 1e-6)).clamp(-3, 3)
-                        else:
-                            current = targets[key_obj][anchor_idx, grid_y, grid_x].item()
-                            if current < CENTER_OBJECTNESS_TARGET:
-                                targets[key_obj][anchor_idx, grid_y, grid_x] = max(
-                                    current, NEIGHBOR_OBJECTNESS_TARGET)
+                targets[key_bbox][off + 0, grid_y, grid_x] = \
+                    (cx * grid_w) - grid_x
+                targets[key_bbox][off + 1, grid_y, grid_x] = \
+                    (cy * grid_h) - grid_y
+                targets[key_bbox][off + 2, grid_y, grid_x] = \
+                    torch.log(torch.tensor(w / anchor_size + 1e-6)).clamp(-3, 3)
+                targets[key_bbox][off + 3, grid_y, grid_x] = \
+                    torch.log(torch.tensor(h / anchor_size + 1e-6)).clamp(-3, 3)
 
         return targets
 
@@ -192,8 +172,9 @@ class ThermalAugmentor:
     All transforms preserve bounding box coordinates.
     """
 
-    def __init__(self, input_size=None):
-        self.input_h, self.input_w = resolve_input_size(input_size)
+    def __init__(self):
+        self.input_h = INPUT_HEIGHT
+        self.input_w = INPUT_WIDTH
         self._try_load_albumentations()
 
     def _try_load_albumentations(self):
@@ -316,17 +297,14 @@ class ThermalPreprocessor:
         img_tensor, targets = preprocessor.process(image, bboxes, labels)
     """
 
-    def __init__(self, encoder=None, normalize_method='minmax', input_size=None):
+    def __init__(self, encoder=None, normalize_method='minmax'):
         """
         Args:
             encoder: GridEncoder instance (creates default if None)
             normalize_method: 'minmax', 'histogram', or 'clahe'
-            input_size: (H, W) resize target; defaults to config INPUT_SIZE
         """
-        self.input_size = input_size or INPUT_SIZE
-        self.input_h, self.input_w = resolve_input_size(self.input_size)
-        self.encoder = encoder or GridEncoder(input_size=self.input_size)
-        self.augmentor = ThermalAugmentor(input_size=self.input_size)
+        self.encoder = encoder or GridEncoder()
+        self.augmentor = ThermalAugmentor()
         self.normalize_method = normalize_method
 
     def normalize(self, image):
@@ -434,13 +412,6 @@ class ThermalPreprocessor:
         targets = self.encoder.encode(boxes_norm, valid_labels, input_size=None) # handled via grid_h/w configs now
 
         return img_tensor, targets
-
-
-def make_preprocessor(input_size=None, encoder=None):
-    """Build preprocessor + shared GridEncoder for a given input resolution."""
-    input_size = input_size or INPUT_SIZE
-    encoder = encoder or GridEncoder(input_size=input_size)
-    return ThermalPreprocessor(encoder=encoder, input_size=input_size)
 
 
 # ============================================================================

@@ -28,13 +28,6 @@ DATASET_SUBDIRS = {
     'llvip': 'llvip',
     'kaist': 'kaist-multispectral',
     'flirv2': 'FLIR_ADAS_v2',
-    'camo_m3fd': 'CAMO-M3FD',
-}
-
-# Project-root folder names when not under DATASET_ROOT
-_DATASET_ROOT_FALLBACKS = {
-    'llvip': 'LLVIP',
-    'camo_m3fd': 'CAMO-M3FD',
 }
 
 
@@ -47,9 +40,8 @@ def get_dataset_path(dataset_name):
     path = os.path.join(DATASET_ROOT, subdir)
     if os.path.isdir(path):
         return path
-    # Fallback: dataset folder at project root (e.g. ./LLVIP, ./CAMO-M3FD)
-    alt_name = _DATASET_ROOT_FALLBACKS.get(dataset_name, subdir)
-    alt = os.path.join(_PROJECT_DIR, alt_name)
+    # Fallback: dataset folder at project root (e.g. ./LLVIP)
+    alt = os.path.join(_PROJECT_DIR, subdir.upper() if dataset_name == 'llvip' else subdir)
     if os.path.isdir(alt):
         return alt
     return path
@@ -92,19 +84,6 @@ DATASET_CONFIGS = {
         'classes': ['person', 'bike'],  # Mapped to person_visible
         'native_resolution': (640, 512),
     },
-    'camo_m3fd': {
-        'name': 'CAMO-M3FD',
-        'description': 'Cross-spectral camouflaged pedestrian (RGB + thermal + masks)',
-        'rgb_subdir': 'Imgs',
-        'thermal_subdir': 'Thermal',
-        'gt_subdir': 'GT',
-        'splits': ['train', 'val', 'test'],
-        'annotation_format': 'segmentation_mask',
-        'classes': ['camouflaged_pedestrian'],
-        'native_resolution': (1024, 768),   # W x H
-        'min_mask_area': 100,               # Small camouflaged targets (~20 px wide)
-        'class_id': 1,                      # person_visible — matches Phase 1 head
-    },
 }
 
 # Active dataset (change this based on what you upload to Kaggle)
@@ -118,34 +97,9 @@ ACTIVE_DATASET = 'llvip'
 # which is perfectly divisible by 32 for the 4 FPN downsampling stages.
 INPUT_WIDTH = 160
 INPUT_HEIGHT = 128
-INPUT_SIZE = (INPUT_HEIGHT, INPUT_WIDTH)  # (128, 160) — ESP32 deployment default
-
-# Higher resolution for CAMO / mixed fine-tuning (2× — targets ~7 px wide vs ~3 px)
-TRAIN_INPUT_WIDTH = 320
-TRAIN_INPUT_HEIGHT = 256
-TRAIN_INPUT_SIZE = (TRAIN_INPUT_HEIGHT, TRAIN_INPUT_WIDTH)  # (256, 320)
+INPUT_SIZE = (INPUT_HEIGHT, INPUT_WIDTH) # (128, 160)
 
 INPUT_CHANNELS = 4   # 3 (RGB) + 1 (Thermal)
-
-
-def resolve_input_size(size=None):
-    """Return (height, width) from None, int, or (h, w) tuple."""
-    if size is None:
-        return INPUT_HEIGHT, INPUT_WIDTH
-    if isinstance(size, (list, tuple)):
-        return int(size[0]), int(size[1])
-    return int(size), int(size)
-
-
-def grid_dims_for(input_size=None):
-    """Grid dimensions for small (÷8) and large (÷16) detection heads."""
-    h, w = resolve_input_size(input_size)
-    return {
-        'small_h': h // 8,
-        'small_w': w // 8,
-        'large_h': h // 16,
-        'large_w': w // 16,
-    }
 
 # ============================================================================
 # TARGET CLASSES (BGB MISSION CRITICAL)
@@ -158,14 +112,17 @@ CLASS_MAP = {
 }
 NUM_CLASSES = len(CLASS_MAP)  # 4: background + 3 intrusion types
 
-# Anchor configuration — Phase 1 (2 anchors, best mAP so far)
-NUM_ANCHORS = 2
+# Anchor configuration (optimized for human thermal signatures)
+NUM_ANCHORS = 2  # Reduced from 3 — fewer target shape types needed
+# Next retrain for bike/scooter riders: NUM_ANCHORS=3, ratios=[1.6, 2.5, 3.5]
 
-# Default anchor aspect ratios (h/w) — K-Means will refine at train time
-DEFAULT_ANCHOR_RATIOS = [2.3, 3.5]
+# Default anchor aspect ratios (h/w) for human shapes in thermal
+# - Standing person at distance: tall, narrow (~0.5 w/h ratio → 2.0 h/w)
+# - Crouching/close person: roughly square (~1.0 h/w)
+DEFAULT_ANCHOR_RATIOS = [2.3, 3.5]   # LLVIP pedestrians: median h/w ≈ 2.93
 
 # Default anchor sizes (relative to image, sqrt of area)
-DEFAULT_ANCHOR_SIZES = [0.108, 0.145]
+DEFAULT_ANCHOR_SIZES = [0.108, 0.145]  # LLVIP: p25/p75 of sqrt(relative area)
 
 # Grid sizes derived from input height/width
 SMALL_GRID_H = INPUT_HEIGHT // 8    # 16
@@ -176,8 +133,8 @@ LARGE_GRID_W = INPUT_WIDTH // 16    # 10
 # Detection thresholds
 CONFIDENCE_THRESHOLD = 0.12     # Lower for small-model objectness scores (previous value was 0.15)
 OBJ_METRIC_THRESHOLD = 0.25     # Threshold when computing objectness recall
-NMS_IOU_THRESHOLD = 0.45        # Standard NMS (0.35 was too aggressive on crowds)
-MAX_DETECTIONS = 15             # Allow more boxes in dense groups
+NMS_IOU_THRESHOLD = 0.45        # Non-Maximum Suppression IoU threshold
+MAX_DETECTIONS = 10             # Max simultaneous detections per frame
 
 # Post-decode filters (remove corner artifacts and tiny false positives)
 MIN_BOX_WIDTH_NORM = 0.03       # Min box width relative to image
@@ -186,14 +143,6 @@ MIN_BOX_AREA_NORM = 0.002       # Min box area (width * height)
 CORNER_FILTER_X = 0.12          # Reject thin boxes in top-left corner band
 CORNER_FILTER_Y = 0.10
 CORNER_MAX_WIDTH = 0.10         # Corner band only applies below this width
-# Wider band for medium-height foliage FPs (still passes thin-box rule above)
-CORNER_FILTER_X_WIDE = 0.13
-CORNER_FILTER_Y_WIDE = 0.30
-CORNER_WIDE_MAX_WIDTH = 0.10
-CORNER_LOW_CONF_MAX = 0.40      # Wide band only below this confidence
-# Small-head grid cells that fire on trees/foliage in the top-left
-SMALL_GRID_BLACKLIST_GX_MAX = 2
-SMALL_GRID_BLACKLIST_GY_MAX = 1
 
 # ============================================================================
 # MODEL ARCHITECTURE CONFIGURATION
@@ -217,12 +166,7 @@ EXPAND_RATIO = 3           # Reduced to 3
 # TRAINING CONFIGURATION (tuned for local CPU — Acer Aspire 3, 7GB RAM)
 # ============================================================================
 BATCH_SIZE = 8             # Low RAM; increase to 16 if training is stable
-LEARNING_RATE = 1e-3       # Initial learning rate (full training)
-FINETUNE_LEARNING_RATE = 1e-4   # Fine-tune / mixed training
-MIXED_CAMO_SAMPLE_WEIGHT = 0.30  # Fraction of training batches from CAMO-M3FD
-MIXED_EPOCH_LLVIP_CAP = 1000     # Max LLVIP samples per epoch (CPU-friendly)
-MIXED_VAL_LLVIP_CAP = 400        # Max LLVIP val samples per epoch
-CHECKPOINT_METRIC = 'bbox_iou'   # 'bbox_iou' or 'val_loss'
+LEARNING_RATE = 1e-3       # Initial learning rate
 WEIGHT_DECAY = 5e-4        # Slightly stronger L2 for val generalization
 EPOCHS = 50                # Enough for demo; early stopping may finish sooner
 PATIENCE = 10              # Early stopping patience
@@ -232,17 +176,6 @@ NUM_WORKERS = 0            # 0 avoids RAM spikes on 7GB systems
 BBOX_WEIGHT = 3.0          # Bounding box regression
 OBJ_WEIGHT = 5.0           # Objectness (was 10; grid is mostly negatives)
 CLASS_WEIGHT = 0.5         # Image-level class (trivial on LLVIP)
-
-# --- Training improvements (Phase 3: A + B) ---
-# A: neighbor cells disabled (caused inference floods); set to 1 only after retuning
-POSITIVE_CELL_RADIUS = 0   # 0 = single center cell per person
-CENTER_OBJECTNESS_TARGET = 1.0
-NEIGHBOR_OBJECTNESS_TARGET = 0.5   # soft label; no bbox regression on neighbors
-BBOX_POSITIVE_THRESHOLD = 0.75     # CIoU loss only where obj target is center (1.0)
-# B: focal loss on objectness (down-weights easy background cells)
-USE_FOCAL_OBJECTNESS = True
-FOCAL_ALPHA = 0.25
-FOCAL_GAMMA = 2.0
 
 # Learning rate schedule
 LR_SCHEDULER = 'cosine_warm_restarts'

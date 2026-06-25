@@ -16,7 +16,7 @@ import torch
 from torch.utils.data import Subset
 
 from config import (
-    INPUT_HEIGHT, INPUT_WIDTH, DEVICE, DEFAULT_ANCHOR_SIZES,
+    INPUT_SIZE, DEVICE, DEFAULT_ANCHOR_SIZES,
     CONFIDENCE_THRESHOLD, NMS_IOU_THRESHOLD,
 )
 from data_loading import get_val_base_dataset
@@ -217,7 +217,8 @@ def run_detection_evaluation(
         print("=" * 70)
 
     model = load_inference_model(model_path, device=device)
-    preprocessor = ThermalPreprocessor()
+    input_size = getattr(model, 'input_size', INPUT_SIZE)
+    preprocessor = ThermalPreprocessor(input_size=input_size)
     val_dataset = get_val_base_dataset(dataset_name, dataset_root=dataset_root)
 
     n_samples = len(val_dataset)
@@ -253,6 +254,7 @@ def run_detection_evaluation(
             preds['obj_large'][0], preds['bbox_large'][0],
             anchor_sizes=DEFAULT_ANCHOR_SIZES,
             conf_threshold=conf_threshold,
+            input_size=input_size,
         )
 
         gt_boxes = annotations_to_norm_boxes(annotations, h_orig, w_orig)

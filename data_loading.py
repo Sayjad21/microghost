@@ -17,13 +17,16 @@ import cv2
 import numpy as np
 import xml.etree.ElementTree as ET
 from glob import glob
-from torch.utils.data import Dataset, DataLoader, random_split, ConcatDataset
+from torch.utils.data import Dataset, DataLoader, random_split, ConcatDataset, WeightedRandomSampler, Subset
 import torch
 
 from config import (
     CLASS_MAP, NUM_CLASSES, INPUT_SIZE, INPUT_CHANNELS,
     DATASET_ROOT, DATASET_CONFIGS, ACTIVE_DATASET, get_dataset_path,
     BATCH_SIZE, NUM_WORKERS, VAL_RATIO, RANDOM_SEED, DEVICE,
+    MIXED_CAMO_SAMPLE_WEIGHT,
+    MIXED_EPOCH_LLVIP_CAP,
+    MIXED_VAL_LLVIP_CAP,
 )
 
 # Person-like annotation labels mapped to person_visible for training
@@ -213,6 +216,138 @@ class LLVIPDataset(Dataset):
             print(f"\n⚠️  MISSING ANNOTATIONS: {len(self.missing_annotations)}")
         if self.unknown_classes:
             print(f"\n⚠️  UNKNOWN CLASSES (skipped): {self.unknown_classes}")
+
+
+# ============================================================================
+# CAMO-M3FD DATASET LOADER
+# ============================================================================
+
+def mask_to_boxes(mask, min_area=400, class_id=None):
+    """
+    Convert a binary segmentation mask to axis-aligned bounding boxes.
+
+    Each connected foreground region becomes one detection target.
+    """
+    class_id = class_id if class_id is not None else CLASS_MAP['person_visible']
+    if mask is None:
+        return []
+
+    if mask.ndim == 3:
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+
+    binary = (mask > 0).astype(np.uint8)
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    annotations = []
+    for cnt in contours:
+        x, y, bw, bh = cv2.boundingRect(cnt)
+        if bw * bh < min_area:
+            continue
+        annotations.append({
+            'class_id': class_id,
+            'xmin': x,
+            'ymin': y,
+            'xmax': x + bw,
+            'ymax': y + bh,
+        })
+    return annotations
+
+
+class CAMOM3FDDataset(Dataset):
+    """
+    CAMO-M3FD: Camouflaged pedestrian RGB + thermal pairs with segmentation masks.
+
+    Structure:
+    ```
+    CAMO-M3FD/
+    ├── train/
+    │   ├── Imgs/      # Visible RGB (.png)
+    │   ├── Thermal/   # Thermal (.png)
+    │   └── GT/        # Binary masks (0 / 255)
+    ├── val/
+    └── test/
+    ```
+
+    Masks are converted to bounding boxes (one per connected region).
+    """
+
+    def __init__(self, root_dir, split='train', min_mask_area=None, verbose=True):
+        self.root_dir = root_dir
+        self.split = split
+        self.verbose = verbose
+        cfg = DATASET_CONFIGS.get('camo_m3fd', {})
+        self.min_mask_area = min_mask_area or cfg.get('min_mask_area', 100)
+        self.class_id = cfg.get('class_id', CLASS_MAP['person_visible'])
+
+        split_dir = os.path.join(root_dir, split)
+        self.rgb_dir = os.path.join(split_dir, cfg.get('rgb_subdir', 'Imgs'))
+        self.thermal_dir = os.path.join(split_dir, cfg.get('thermal_subdir', 'Thermal'))
+        self.gt_dir = os.path.join(split_dir, cfg.get('gt_subdir', 'GT'))
+
+        self.paired_paths = []
+        self.missing_gt = []
+
+        if not os.path.isdir(self.rgb_dir):
+            if verbose:
+                print(f"⚠️  CAMO-M3FD RGB dir not found: {self.rgb_dir}")
+            return
+
+        for ext in ('*.png', '*.jpg', '*.jpeg', '*.PNG', '*.JPG'):
+            for rgb_path in sorted(glob(os.path.join(self.rgb_dir, ext))):
+                stem = os.path.splitext(os.path.basename(rgb_path))[0]
+                thermal_path = os.path.join(self.thermal_dir, stem + '.png')
+                gt_path = os.path.join(self.gt_dir, stem + '.png')
+                if os.path.exists(thermal_path):
+                    self.paired_paths.append((rgb_path, thermal_path, gt_path))
+                    if not os.path.exists(gt_path):
+                        self.missing_gt.append(gt_path)
+
+        if verbose:
+            print(f"📁 CAMO-M3FD [{split}]: {len(self.paired_paths)} RGB+Thermal pairs, "
+                  f"{len(self.paired_paths) - len(self.missing_gt)} masks found")
+
+    def _parse_mask(self, gt_path, w_orig, h_orig):
+        """Load GT mask and return bounding-box annotations."""
+        if not os.path.exists(gt_path):
+            return []
+        mask = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            return []
+        if mask.shape[0] != h_orig or mask.shape[1] != w_orig:
+            mask = cv2.resize(mask, (w_orig, h_orig), interpolation=cv2.INTER_NEAREST)
+        return mask_to_boxes(mask, min_area=self.min_mask_area, class_id=self.class_id)
+
+    def iter_annotations(self):
+        """Yield (annotations, (h, w)) from GT masks only — for K-Means anchor analysis."""
+        for rgb_path, _, gt_path in self.paired_paths:
+            rgb = cv2.imread(rgb_path)
+            if rgb is None:
+                continue
+            h_orig, w_orig = rgb.shape[:2]
+            yield self._parse_mask(gt_path, w_orig, h_orig), (h_orig, w_orig)
+
+    def __len__(self):
+        return len(self.paired_paths)
+
+    def __getitem__(self, idx):
+        rgb_path, thermal_path, gt_path = self.paired_paths[idx]
+
+        image_rgb = cv2.imread(rgb_path)
+        if image_rgb is None:
+            raise ValueError(f"Failed to load RGB image: {rgb_path}")
+        image_rgb = cv2.cvtColor(image_rgb, cv2.COLOR_BGR2RGB)
+
+        image_thermal = cv2.imread(thermal_path, cv2.IMREAD_GRAYSCALE)
+        if image_thermal is None:
+            raise ValueError(f"Failed to load thermal image: {thermal_path}")
+
+        h_orig, w_orig = image_thermal.shape[:2]
+        annotations = self._parse_mask(gt_path, w_orig, h_orig)
+
+        return (image_rgb, image_thermal), annotations, (h_orig, w_orig)
+
+    def report_issues(self):
+        if self.missing_gt:
+            print(f"\n⚠️  CAMO-M3FD missing GT masks: {len(self.missing_gt)}")
 
 
 # ============================================================================
@@ -633,9 +768,21 @@ def create_dataloaders(dataset_name, preprocessor, dataset_root=None,
             raw_val, preprocessor, augment=False
         )
 
+    elif dataset_name == 'camo_m3fd':
+        raw_train = CAMOM3FDDataset(dataset_root, split='train')
+        raw_val = CAMOM3FDDataset(dataset_root, split='val')
+
+        train_dataset = ThermalIntrusionDataset(
+            raw_train, preprocessor, augment=True
+        )
+        val_dataset = ThermalIntrusionDataset(
+            raw_val, preprocessor, augment=False
+        )
+        raw_train.report_issues()
+
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}. "
-                         f"Supported: llvip, kaist, flirv2")
+                         f"Supported: llvip, kaist, flirv2, camo_m3fd")
 
     # Create DataLoaders
     pin_memory = (DEVICE == 'cuda')
@@ -664,6 +811,78 @@ def create_dataloaders(dataset_name, preprocessor, dataset_root=None,
           f"({len(train_loader)} batches)")
     print(f"  Validation: {len(val_dataset):>6d} samples "
           f"({len(val_loader)} batches)")
+    print(f"  Batch size: {batch_size}")
+    print(f"{'=' * 60}")
+
+    return train_loader, val_loader
+
+
+def create_mixed_dataloaders(preprocessor, llvip_root=None, camo_root=None,
+                             batch_size=None, num_workers=None,
+                             camo_weight=None):
+    """
+    Mixed LLVIP + CAMO-M3FD training with weighted sampling.
+
+    ~70% LLVIP / ~30% CAMO batches by default to prevent forgetting while
+    learning camouflaged pedestrians.
+    """
+    batch_size = batch_size or BATCH_SIZE
+    num_workers = num_workers or NUM_WORKERS
+    camo_weight = camo_weight if camo_weight is not None else MIXED_CAMO_SAMPLE_WEIGHT
+    llvip_root = llvip_root or get_dataset_path('llvip')
+    camo_root = camo_root or get_dataset_path('camo_m3fd')
+
+    raw_llvip_train = LLVIPDataset(llvip_root, split='train')
+    raw_llvip_val = LLVIPDataset(llvip_root, split='test', verbose=False)
+    raw_camo_train = CAMOM3FDDataset(camo_root, split='train')
+    raw_camo_val = CAMOM3FDDataset(camo_root, split='val', verbose=False)
+
+    llvip_train = ThermalIntrusionDataset(raw_llvip_train, preprocessor, augment=True)
+    camo_train = ThermalIntrusionDataset(raw_camo_train, preprocessor, augment=True)
+    llvip_val = ThermalIntrusionDataset(raw_llvip_val, preprocessor, augment=False)
+    camo_val = ThermalIntrusionDataset(raw_camo_val, preprocessor, augment=False)
+    llvip_val_subset = Subset(llvip_val, range(min(len(llvip_val), MIXED_VAL_LLVIP_CAP)))
+
+    n_llvip = len(llvip_train)
+    n_camo = len(camo_train)
+    llvip_w = (1.0 - camo_weight) / max(n_llvip, 1)
+    camo_w = camo_weight / max(n_camo, 1)
+    weights = [llvip_w] * n_llvip + [camo_w] * n_camo
+    epoch_samples = min(n_llvip, MIXED_EPOCH_LLVIP_CAP) + n_camo
+    mixed_train = ConcatDataset([llvip_train, camo_train])
+    mixed_val = ConcatDataset([llvip_val_subset, camo_val])
+
+    pin_memory = (DEVICE == 'cuda')
+    sampler = WeightedRandomSampler(
+        weights, num_samples=epoch_samples, replacement=True,
+    )
+
+    train_loader = DataLoader(
+        mixed_train,
+        batch_size=batch_size,
+        sampler=sampler,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        drop_last=True,
+    )
+    val_loader = DataLoader(
+        mixed_val,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+
+    raw_llvip_train.report_issues()
+    raw_camo_train.report_issues()
+
+    print(f"\n{'=' * 60}")
+    print(f"  DataLoaders Created [MIXED LLVIP + CAMO_M3FD]")
+    print(f"{'=' * 60}")
+    print(f"  LLVIP train:  {n_llvip:>6d}  |  CAMO train: {n_camo:>4d}")
+    print(f"  CAMO sample weight: {camo_weight:.0%}")
+    print(f"  Val (LLVIP {len(llvip_val_subset)} + CAMO {len(camo_val)}): {len(mixed_val)} samples")
+    print(f"  Epoch samples:  {epoch_samples} (~{epoch_samples // batch_size} batches)")
     print(f"  Batch size: {batch_size}")
     print(f"{'=' * 60}")
 
@@ -700,6 +919,9 @@ def get_val_base_dataset(dataset_name, dataset_root=None, val_ratio=None):
 
     if dataset_name == 'flirv2':
         return FLIRv2Dataset(dataset_root, split='val', verbose=False)
+
+    if dataset_name == 'camo_m3fd':
+        return CAMOM3FDDataset(dataset_root, split='test', verbose=False)
 
     raise ValueError(f"Unknown dataset: {dataset_name}")
 

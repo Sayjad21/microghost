@@ -20,9 +20,6 @@ from config import (
     MAX_DETECTIONS, DEVICE, ESP32_S3, ALERT_CONFIG, CLASSIFIER_HIDDEN_DIM,
     MIN_BOX_WIDTH_NORM, MIN_BOX_HEIGHT_NORM, MIN_BOX_AREA_NORM,
     CORNER_FILTER_X, CORNER_FILTER_Y, CORNER_MAX_WIDTH,
-    CORNER_FILTER_X_WIDE, CORNER_FILTER_Y_WIDE, CORNER_WIDE_MAX_WIDTH,
-    CORNER_LOW_CONF_MAX, SMALL_GRID_BLACKLIST_GX_MAX, SMALL_GRID_BLACKLIST_GY_MAX,
-    resolve_input_size, grid_dims_for,
 )
 
 # Inverse class map for alert generation
@@ -105,9 +102,10 @@ def nms(detections, iou_threshold=NMS_IOU_THRESHOLD):
 
 def filter_spurious_detections(detections):
     """
-    Remove tiny boxes, top-left corner artifacts, and foliage grid-cell FPs.
+    Remove tiny boxes and top-left corner artifacts from grid decode clamping.
 
-    Corner boxes appear when top-left small-head cells fire on trees/shadows.
+    Corner boxes appear when cell (0,0) fires with tall anchors: decoded centers
+    near the origin get clamped to x1≈0, y1≈0, producing thin vertical strips.
     """
     kept = []
     for det in detections:
@@ -115,32 +113,17 @@ def filter_spurious_detections(detections):
         bw = x2 - x1
         bh = y2 - y1
         area = bw * bh
-        conf = det['conf']
 
         if bw < MIN_BOX_WIDTH_NORM or bh < MIN_BOX_HEIGHT_NORM:
             continue
         if area < MIN_BOX_AREA_NORM:
             continue
 
-        # Small-head top-left grid cells → foliage false positives
-        if det.get('scale') == 'small':
-            gx = det.get('grid_x', 999)
-            gy = det.get('grid_y', 999)
-            if gx <= SMALL_GRID_BLACKLIST_GX_MAX and gy <= SMALL_GRID_BLACKLIST_GY_MAX:
-                continue
-
-        # Top-left corner artifact band (thin strips at origin)
+        # Top-left corner artifact band
         if x1 < CORNER_FILTER_X and y1 < CORNER_FILTER_Y and bw < CORNER_MAX_WIDTH:
             continue
         # Stuck on top edge from coordinate clamping
         if y1 <= 0.001 and x1 < 0.15:
-            continue
-        # Wider top-left band for low-conf foliage FPs (small-head, upper-left cells)
-        if (det.get('scale') == 'small'
-                and det.get('grid_x', 99) <= 4
-                and det.get('grid_y', 99) <= 3
-                and x1 < CORNER_FILTER_X_WIDE and y1 < CORNER_FILTER_Y_WIDE
-                and bw < CORNER_WIDE_MAX_WIDTH and conf < CORNER_LOW_CONF_MAX):
             continue
 
         kept.append(det)
@@ -148,7 +131,7 @@ def filter_spurious_detections(detections):
 
 
 def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
-                       anchor_sizes=None, conf_threshold=None, input_size=None):
+                       anchor_sizes=None, conf_threshold=None):
     """
     Decode SSD-style head outputs into detection candidates (normalized xyxy).
 
@@ -156,9 +139,9 @@ def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
     """
     anchor_sizes = anchor_sizes or DEFAULT_ANCHOR_SIZES
     conf_threshold = conf_threshold if conf_threshold is not None else CONFIDENCE_THRESHOLD
-    dims = grid_dims_for(input_size)
-    small_grid_w, small_grid_h = dims['small_w'], dims['small_h']
-    large_grid_w, large_grid_h = dims['large_w'], dims['large_h']
+
+    small_grid_w, small_grid_h = INPUT_WIDTH // 8, INPUT_HEIGHT // 8
+    large_grid_w, large_grid_h = INPUT_WIDTH // 16, INPUT_HEIGHT // 16
 
     def _decode_box(pred_box, grid_x, grid_y, grid_w, grid_h, anchor_size):
         cx = (grid_x + pred_box[0]) / grid_w
@@ -172,7 +155,7 @@ def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
             max(0.0, min(1.0, cy + h / 2)),
         ]
 
-    def _extract(obj_map, bbox_map, grid_w, grid_h, scale):
+    def _extract(obj_map, bbox_map, grid_w, grid_h):
         candidates = []
         obj_probs = torch.sigmoid(obj_map).cpu().numpy()
         bbox_data = bbox_map.cpu().numpy()
@@ -187,15 +170,12 @@ def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
                 candidates.append({
                     'conf': float(obj_probs[a, gy, gx]),
                     'bbox': bbox,
-                    'scale': scale,
-                    'grid_x': int(gx),
-                    'grid_y': int(gy),
                 })
         return candidates
 
     candidates = []
-    candidates.extend(_extract(obj_small, bbox_small, small_grid_w, small_grid_h, 'small'))
-    candidates.extend(_extract(obj_large, bbox_large, large_grid_w, large_grid_h, 'large'))
+    candidates.extend(_extract(obj_small, bbox_small, small_grid_w, small_grid_h))
+    candidates.extend(_extract(obj_large, bbox_large, large_grid_w, large_grid_h))
     candidates = filter_spurious_detections(candidates)
     return nms(candidates)
 
@@ -208,6 +188,7 @@ class ThermalInferenceEngine:
 
     def __init__(self, model_path=None, model=None, device=DEVICE):
         self.device = device
+        self.preprocessor = ThermalPreprocessor()
         self.anchor_sizes = DEFAULT_ANCHOR_SIZES
 
         if model is not None:
@@ -217,15 +198,6 @@ class ThermalInferenceEngine:
             self.model = load_inference_model(model_path, device)
         else:
             raise ValueError("Must provide either model_path or model instance.")
-
-        input_size = getattr(self.model, 'input_size', INPUT_SIZE)
-        self.input_size = input_size
-        self.preprocessor = ThermalPreprocessor(input_size=input_size)
-        dims = grid_dims_for(input_size)
-        self.small_grid_w = dims['small_w']
-        self.small_grid_h = dims['small_h']
-        self.large_grid_w = dims['large_w']
-        self.large_grid_h = dims['large_h']
 
     def decode_box_from_grid(self, pred_box, grid_x, grid_y, grid_w, grid_h, anchor_size):
         """Decode grid-based bounding box to [x1, y1, x2, y2] (normalized 0-1)."""
@@ -260,7 +232,7 @@ class ThermalInferenceEngine:
                 candidates.append({
                     'conf': float(conf),
                     'bbox': bbox,
-                    'scale': 'small' if grid_w == self.small_grid_w else 'large'
+                    'scale': 'small' if grid_w == INPUT_WIDTH//8 else 'large'
                 })
 
         return candidates
@@ -293,7 +265,6 @@ class ThermalInferenceEngine:
             preds['obj_small'][0], preds['bbox_small'][0],
             preds['obj_large'][0], preds['bbox_large'][0],
             anchor_sizes=self.anchor_sizes,
-            input_size=self.input_size,
         )
 
         # 5. Classifier labels detections
