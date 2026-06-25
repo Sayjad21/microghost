@@ -156,7 +156,7 @@ def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
         candidates = []
         obj_probs = torch.sigmoid(obj_map).cpu().numpy()
         bbox_data = bbox_map.cpu().numpy()
-        for a in range(NUM_ANCHORS):
+        for a in range(obj_probs.shape[0]):   # use actual tensor size, not global constant
             y_idx, x_idx = np.where(obj_probs[a] > conf_threshold)
             for gy, gx in zip(y_idx, x_idx):
                 off = a * 4
@@ -302,6 +302,34 @@ class ThermalInferenceEngine:
 
         return final_detections
 
+    def detect_confirmed(self, image_rgb, image_thermal, lap_thresh=50.0):
+        """Reject detections where the RGB region is visually uniform (bonnets,
+        flat surfaces). Real people have clothing/edge structure in RGB.
+        lap_thresh: Laplacian variance cutoff — raise to be stricter, lower to be lenient.
+        """
+        full_dets = self.detect(image_rgb, image_thermal)
+        if not full_dets:
+            return []
+
+        h, w = image_rgb.shape[:2]
+        confirmed = []
+        for det in full_dets:
+            x1, y1, x2, y2 = det['bbox']
+            x1p, y1p = max(0, int(x1 * w)), max(0, int(y1 * h))
+            x2p, y2p = min(w, int(x2 * w)), min(h, int(y2 * h))
+
+            if x2p <= x1p or y2p <= y1p:
+                continue
+
+            crop_gray = cv2.cvtColor(image_rgb[y1p:y2p, x1p:x2p], cv2.COLOR_RGB2GRAY)
+            lap_var = cv2.Laplacian(crop_gray, cv2.CV_64F).var()
+
+            print(f"  bbox={[round(v,2) for v in det['bbox']]}  RGB lap_var={lap_var:.1f}")
+
+            if lap_var >= lap_thresh:
+                confirmed.append(det)
+
+        return confirmed
 
 # ============================================================================
 # 3. ALERT GENERATOR
