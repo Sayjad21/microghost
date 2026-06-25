@@ -140,6 +140,9 @@ def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
     small_grid_w, small_grid_h = INPUT_WIDTH // 8, INPUT_HEIGHT // 8
     large_grid_w, large_grid_h = INPUT_WIDTH // 16, INPUT_HEIGHT // 16
 
+    # CRITICAL FIX: Dynamically determine anchors from tensor shape
+    actual_num_anchors = obj_small.shape[0]
+
     def _decode_box(pred_box, grid_x, grid_y, grid_w, grid_h, anchor_size):
         cx = (grid_x + pred_box[0]) / grid_w
         cy = (grid_y + pred_box[1]) / grid_h
@@ -156,7 +159,7 @@ def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
         candidates = []
         obj_probs = torch.sigmoid(obj_map).cpu().numpy()
         bbox_data = bbox_map.cpu().numpy()
-        for a in range(NUM_ANCHORS):
+        for a in range(actual_num_anchors):
             y_idx, x_idx = np.where(obj_probs[a] > conf_threshold)
             for gy, gx in zip(y_idx, x_idx):
                 off = a * 4
