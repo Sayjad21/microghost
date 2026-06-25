@@ -174,7 +174,7 @@ def main():
             return
 
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        detections = engine.detect_confirmed(img_rgb, img_thermal, lap_thresh=70.0) 
+        detections = engine.detect_confirmed(img_rgb, img_thermal, lap_thresh=80.0) 
         
 #       what lap_thresh=80.0 does is:
 
