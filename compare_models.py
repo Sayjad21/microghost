@@ -1,4 +1,5 @@
 import os
+import argparse
 import torch
 import numpy as np
 import matplotlib
@@ -37,7 +38,7 @@ def calculate_metrics(pred_pixels, gt_pixels, iou_thresh=0.5):
     fn = len(gt_pixels) - len(matched_gts)
     return tp, fp, fn
 
-def run_model_comparison(dataset_name='llvip', output_dir='comparison_results'):
+def run_model_comparison(dataset_name='llvip', dataset_root=None, output_dir='comparison_results'):
     os.makedirs(output_dir, exist_ok=True)
     
     print("Loading V1 (Base) Engine... [Forcing 2 Anchors]")
@@ -50,7 +51,7 @@ def run_model_comparison(dataset_name='llvip', output_dir='comparison_results'):
     print("Loading V2 (Updated) Engine... [Dynamic/3 Anchors]")
     engine_v2 = ThermalInferenceEngine(model_path=V2_MODEL_PATH)
     
-    val_dataset = get_val_base_dataset(dataset_name)
+    val_dataset = get_val_base_dataset(dataset_name, dataset_root=dataset_root)
     
     # Stat Tracking
     stats = {
@@ -146,4 +147,9 @@ def save_comparison_plot(rgb, thermal, gt, v1_box, v1_conf, v2_box, v2_conf, idx
     plt.close()
 
 if __name__ == '__main__':
-    run_model_comparison()
+    parser = argparse.ArgumentParser(description="Compare V1 and V2 Models")
+    parser.add_argument('--dataset', type=str, default='llvip', help='Dataset name')
+    parser.add_argument('--data-root', type=str, default=None, help='Dataset root path')
+    args = parser.parse_args()
+    
+    run_model_comparison(dataset_name=args.dataset, dataset_root=args.data_root)
