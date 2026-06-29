@@ -501,6 +501,228 @@ class FLIRv2Dataset(Dataset):
         return (image_rgb, image_thermal), clamped_annots, (h_orig, w_orig)
 
 # ============================================================================
+# CAMO M3FD DATASET LOADER
+# ============================================================================
+
+class CAMOD3FDDataset(Dataset):
+    """
+    CAMO M3FD: Multi-Modal Multi-Spectral Detection Dataset.
+
+    Structure expected (Kaggle: hvelesaca/camo-m3fd):
+    ```
+    camo-m3fd/
+    ├── train/
+    │   ├── GT/        <- VOC XML (.xml) or YOLO txt (.txt) annotations
+    │   ├── Imgs/      <- RGB images
+    │   └── Thermal/   <- Thermal images
+    ├── val/
+    │   └── ...
+    └── test/
+        └── ...
+    ```
+
+    Class mapping:
+      People / Person / Pedestrian → person_visible (class 1)
+      Car / Bus / Motorcycle / Truck → vehicle_boat (class 3)
+      Lamp → ignored
+    """
+
+    # M3FD label name → MicroGhost class_id
+    _NAME_TO_ID = {
+        'people':       CLASS_MAP['person_visible'],
+        'person':       CLASS_MAP['person_visible'],
+        'pedestrian':   CLASS_MAP['person_visible'],
+        'human':        CLASS_MAP['person_visible'],
+        'car':          CLASS_MAP['vehicle_boat'],
+        'bus':          CLASS_MAP['vehicle_boat'],
+        'motorcycle':   CLASS_MAP['vehicle_boat'],
+        'motorbike':    CLASS_MAP['vehicle_boat'],
+        'truck':        CLASS_MAP['vehicle_boat'],
+        'van':          CLASS_MAP['vehicle_boat'],
+        'lamp':         None,  # intentionally ignored
+    }
+
+    # YOLO class index → MicroGhost class_id (M3FD ordering)
+    # 0=People, 1=Car, 2=Bus, 3=Motorcycle, 4=Lamp, 5=Truck
+    _YOLO_IDX_TO_ID = {
+        0: CLASS_MAP['person_visible'],
+        1: CLASS_MAP['vehicle_boat'],
+        2: CLASS_MAP['vehicle_boat'],
+        3: CLASS_MAP['vehicle_boat'],
+        4: None,  # Lamp — ignored
+        5: CLASS_MAP['vehicle_boat'],
+    }
+
+    def __init__(self, root_dir, split='train', verbose=True):
+        self.root_dir    = root_dir
+        self.split       = split
+        self.verbose     = verbose
+
+        self.img_dir     = os.path.join(root_dir, split, 'Imgs')
+        self.thermal_dir = os.path.join(root_dir, split, 'Thermal')
+        self.gt_dir      = os.path.join(root_dir, split, 'GT')
+
+        self.parse_errors    = []
+        self.unknown_classes = set()
+        self.paired_paths    = []
+
+        if not os.path.exists(self.img_dir):
+            if verbose:
+                print(f"⚠️  CAMO M3FD Imgs dir not found: {self.img_dir}")
+            return
+
+        for ext in ('*.jpg', '*.png', '*.jpeg', '*.JPG', '*.PNG'):
+            for img_path in sorted(glob(os.path.join(self.img_dir, ext))):
+                stem = os.path.splitext(os.path.basename(img_path))[0]
+
+                # Match thermal (same stem, any image extension)
+                thermal_path = None
+                for t_ext in ('.jpg', '.png', '.jpeg', '.JPG', '.PNG'):
+                    tp = os.path.join(self.thermal_dir, stem + t_ext)
+                    if os.path.exists(tp):
+                        thermal_path = tp
+                        break
+
+                if thermal_path is None:
+                    continue  # skip: no thermal pair
+
+                # Match annotation: prefer XML, fall back to YOLO txt
+                gt_path = None
+                for g_ext in ('.xml', '.txt'):
+                    gp = os.path.join(self.gt_dir, stem + g_ext)
+                    if os.path.exists(gp):
+                        gt_path = gp
+                        break
+
+                self.paired_paths.append((img_path, thermal_path, gt_path))
+
+        if verbose:
+            found = sum(1 for _, _, g in self.paired_paths if g is not None)
+            print(f"📁 CAMO M3FD [{split}]: {len(self.paired_paths)} RGB+Thermal pairs, "
+                  f"{found} annotations found")
+
+    # ------------------------------------------------------------------
+    def _clamp_box(self, xmin, ymin, xmax, ymax, w, h):
+        xmin = max(0, min(int(xmin), w - 1))
+        ymin = max(0, min(int(ymin), h - 1))
+        xmax = max(xmin + 1, min(int(xmax), w))
+        ymax = max(ymin + 1, min(int(ymax), h))
+        return xmin, ymin, xmax, ymax
+
+    def _parse_annotation(self, gt_path, w_orig, h_orig):
+        if gt_path is None or not os.path.exists(gt_path):
+            return []
+        if gt_path.endswith('.xml'):
+            return self._parse_xml(gt_path, w_orig, h_orig)
+        return self._parse_yolo(gt_path, w_orig, h_orig)
+
+    def _parse_xml(self, xml_path, w_orig, h_orig):
+        """Parse Pascal VOC XML annotation."""
+        annotations = []
+        try:
+            root = ET.parse(xml_path).getroot()
+            for obj in root.findall('object'):
+                name_el = obj.find('name')
+                if name_el is None:
+                    continue
+                name = name_el.text.strip().lower()
+                class_id = self._NAME_TO_ID.get(name)
+                if class_id is None:
+                    if name != 'lamp':
+                        self.unknown_classes.add(name)
+                    continue
+                bb = obj.find('bndbox')
+                if bb is None:
+                    continue
+                xmin, ymin, xmax, ymax = self._clamp_box(
+                    float(bb.find('xmin').text), float(bb.find('ymin').text),
+                    float(bb.find('xmax').text), float(bb.find('ymax').text),
+                    w_orig, h_orig,
+                )
+                annotations.append({
+                    'class_id': class_id,
+                    'xmin': xmin, 'ymin': ymin,
+                    'xmax': xmax, 'ymax': ymax,
+                })
+        except ET.ParseError as e:
+            self.parse_errors.append((xml_path, str(e)))
+        except Exception as e:
+            self.parse_errors.append((xml_path, str(e)))
+        return annotations
+
+    def _parse_yolo(self, txt_path, w_orig, h_orig):
+        """Parse YOLO format: class_idx cx cy w h (normalized 0-1 per line)."""
+        annotations = []
+        try:
+            with open(txt_path, 'r') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) < 5:
+                        continue
+                    cls_idx = int(parts[0])
+                    class_id = self._YOLO_IDX_TO_ID.get(cls_idx)
+                    if class_id is None:
+                        continue
+                    cx, cy, bw, bh = (float(x) for x in parts[1:5])
+                    xmin, ymin, xmax, ymax = self._clamp_box(
+                        (cx - bw / 2) * w_orig,
+                        (cy - bh / 2) * h_orig,
+                        (cx + bw / 2) * w_orig,
+                        (cy + bh / 2) * h_orig,
+                        w_orig, h_orig,
+                    )
+                    annotations.append({
+                        'class_id': class_id,
+                        'xmin': xmin, 'ymin': ymin,
+                        'xmax': xmax, 'ymax': ymax,
+                    })
+        except Exception as e:
+            self.parse_errors.append((txt_path, str(e)))
+        return annotations
+
+    # ------------------------------------------------------------------
+    def report_issues(self):
+        if self.parse_errors:
+            print(f"  ⚠️  {len(self.parse_errors)} annotation parse errors "
+                  f"(first: {self.parse_errors[0][0]})")
+        if self.unknown_classes:
+            print(f"  ℹ️  Unknown class names skipped: {self.unknown_classes}")
+
+    def iter_annotations(self):
+        """Yield (annotations, (h, w)) without loading images — used by K-Means anchor analysis."""
+        for img_path, _, gt_path in self.paired_paths:
+            img = cv2.imread(img_path)
+            h_orig, w_orig = img.shape[:2] if img is not None else (480, 640)
+            yield self._parse_annotation(gt_path, w_orig, h_orig), (h_orig, w_orig)
+
+    def __len__(self):
+        return len(self.paired_paths)
+
+    def __getitem__(self, idx):
+        """Returns: (image_rgb, image_thermal), annotations, (h_orig, w_orig)"""
+        img_path, thermal_path, gt_path = self.paired_paths[idx]
+
+        # Load RGB
+        image_rgb = cv2.imread(img_path)
+        if image_rgb is None:
+            raise ValueError(f"Failed to load RGB: {img_path}")
+        image_rgb = cv2.cvtColor(image_rgb, cv2.COLOR_BGR2RGB)
+        h_orig, w_orig = image_rgb.shape[:2]
+
+        # Load Thermal (grayscale)
+        image_thermal = cv2.imread(thermal_path, cv2.IMREAD_GRAYSCALE)
+        if image_thermal is None:
+            tmp = cv2.imread(thermal_path)
+            if tmp is not None:
+                image_thermal = cv2.cvtColor(tmp, cv2.COLOR_BGR2GRAY)
+            else:
+                image_thermal = np.zeros((h_orig, w_orig), dtype=np.uint8)
+
+        annotations = self._parse_annotation(gt_path, w_orig, h_orig)
+        return (image_rgb, image_thermal), annotations, (h_orig, w_orig)
+
+
+# ============================================================================
 # UNIFIED DATASET WRAPPER
 # ============================================================================
 
@@ -663,9 +885,18 @@ def create_dataloaders(dataset_name, preprocessor, dataset_root=None,
             raw_val, preprocessor, augment=False
         )
 
+    elif dataset_name == 'camod3fd':
+        raw_train = CAMOD3FDDataset(dataset_root, split='train')
+        raw_val   = CAMOD3FDDataset(dataset_root, split='val')
+
+        train_dataset = ThermalIntrusionDataset(raw_train, preprocessor, augment=True)
+        val_dataset   = ThermalIntrusionDataset(raw_val,   preprocessor, augment=False)
+
+        raw_train.report_issues()
+
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}. "
-                         f"Supported: llvip, kaist, flirv2")
+                         f"Supported: llvip, kaist, flirv2, camod3fd")
 
     # Create DataLoaders
     pin_memory = (DEVICE == 'cuda')
@@ -730,6 +961,9 @@ def get_val_base_dataset(dataset_name, dataset_root=None, val_ratio=None):
 
     if dataset_name == 'flirv2':
         return FLIRv2Dataset(dataset_root, split='val', verbose=False)
+
+    if dataset_name == 'camod3fd':
+        return CAMOD3FDDataset(dataset_root, split='val', verbose=False)
 
     raise ValueError(f"Unknown dataset: {dataset_name}")
 

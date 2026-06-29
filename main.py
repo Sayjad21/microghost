@@ -27,19 +27,21 @@ def parse_args():
     # Train
     train_parser = subparsers.add_parser('train', help='Train the model')
     train_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET,
-                              choices=['llvip', 'kaist', 'flirv2'], help='Dataset to use')
+                              choices=['llvip', 'kaist', 'flirv2', 'camod3fd'], help='Dataset to use')
     train_parser.add_argument('--data-root', type=str, default=None,
                               help='Override dataset directory (default: data/<dataset>/)')
     train_parser.add_argument('--epochs', type=int, default=None, help='Override config epochs')
     train_parser.add_argument('--batch-size', type=int, default=None, help='Override config batch size')
     train_parser.add_argument('--num-workers', type=int, default=None, help='Override config num workers (CPU scaling)')
     train_parser.add_argument('--no-kmeans', action='store_true', help='Skip K-Means anchor optimization')
+    train_parser.add_argument('--resume-v1', action='store_true',
+                              help='Fine-tune from V1 checkpoint instead of random init')
 
     # Evaluate
     eval_parser = subparsers.add_parser('evaluate', help='Evaluate trained model')
     eval_parser.add_argument('--model-path', type=str, default=BEST_MODEL_PATH)
     eval_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET,
-                             choices=['llvip', 'kaist', 'flirv2'])
+                             choices=['llvip', 'kaist', 'flirv2', 'camod3fd'])
     eval_parser.add_argument('--data-root', type=str, default=None)
     eval_parser.add_argument('--conf-threshold', type=float, default=None,
                              help='Objectness confidence threshold (default: config)')
@@ -114,6 +116,16 @@ def main():
 
         # 4. Model & Trainer
         model = MicroGhostThermal()
+
+        # --- Fine-tune from V1 if requested (transfer learning) ---
+        if args.resume_v1:
+            from config import BEST_MODEL_V1_PATH
+            if os.path.exists(BEST_MODEL_V1_PATH):
+                ckpt = torch.load(BEST_MODEL_V1_PATH, map_location='cpu')
+                model.load_state_dict(ckpt['model_state_dict'], strict=False)
+                print(f"✅ Fine-tuning from V1: {BEST_MODEL_V1_PATH}")
+            else:
+                print(f"⚠️  --resume-v1: {BEST_MODEL_V1_PATH} not found — training from scratch")
 
         # --- TARGET HARDWARE PROFILING (ESP32-S3) ---
         print("\n" + "="*60)
