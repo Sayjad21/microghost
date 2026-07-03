@@ -61,15 +61,15 @@ def get_dataset_path(dataset_name):
     kaggle_input = '/kaggle/input'
     if os.path.exists(kaggle_input):
         for root, dirs, _ in os.walk(kaggle_input):
-            # Limit search depth to avoid hanging
-            if root.count(os.sep) - kaggle_input.count(os.sep) > 3:
+            # Limit search depth to avoid hanging (Kaggle paths can be deep)
+            if root.count(os.sep) - kaggle_input.count(os.sep) > 6:
                 continue
                 
             lower_root = root.lower()
             lower_dirs = [d.lower() for d in dirs]
             
             if dataset_name == 'llvip' and 'llvip' in lower_root:
-                if 'visible' in lower_dirs and 'infrared' in lower_dirs:
+                if 'infrared' in lower_dirs and 'annotations' in lower_dirs:
                     return root
                     
             if dataset_name == 'camod3fd' and ('m3fd' in lower_root or 'camo' in lower_root):
