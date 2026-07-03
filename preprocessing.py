@@ -174,8 +174,6 @@ class ThermalAugmentor:
                 A.Affine(
                     scale=(0.9, 1.1),
                     translate_percent={"x": (-0.05, 0.05), "y": (-0.05, 0.05)},
-                    mode=cv2.BORDER_CONSTANT,
-                    cval=0,
                     p=0.5
                 ),
                 A.RandomBrightnessContrast(
@@ -183,7 +181,7 @@ class ThermalAugmentor:
                     contrast_limit=0.3,
                     p=0.7,
                 ),
-                A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+                A.GaussNoise(p=0.5),
                 A.GaussianBlur(blur_limit=(3, 5), p=0.2),
                 A.Resize(self.input_h, self.input_w),
             ], additional_targets={'image_thermal': 'image'}, bbox_params=A.BboxParams(
