@@ -178,6 +178,41 @@ def main():
                 history = trainer.fit(save_path=BEST_MODEL_PATH)
                 plot_training_history(history, save_path=f'training_history_v2_phase{phase}.png')
 
+            # =================================================================
+            # POST-TRAINING PLUG-AND-PLAY SUITE
+            # =================================================================
+            print("\n" + "="*60)
+            print("  STARTING AUTOMATED POST-TRAINING SUITE")
+            print("="*60)
+            
+            # 1. Evaluate
+            print("\n[1/3] Running Full Validation Evaluation...")
+            dataset_root = args.data_root or get_dataset_path(args.dataset)
+            run_detection_evaluation(
+                model_path=BEST_MODEL_PATH,
+                dataset_name=args.dataset,
+                dataset_root=dataset_root
+            )
+
+            # 2. Diagnose
+            print("\n[2/3] Generating Visual Diagnostics...")
+            try:
+                from diagnose import run_visual_diagnostics
+                run_visual_diagnostics(
+                    dataset_name=args.dataset, 
+                    dataset_root=dataset_root
+                )
+            except Exception as e:
+                print(f"Diagnostics skipped or failed: {e}")
+
+            # 3. Export
+            print("\n[3/3] Exporting to ONNX and TFLite...")
+            from inference import load_inference_model
+            final_model, _ = load_inference_model(BEST_MODEL_PATH)
+            export_to_onnx(final_model, ONNX_PATH)
+            export_to_tflite(ONNX_PATH, TFLITE_FP16_PATH, int8=False)
+            print("\nPlug-and-Play Suite Complete! All artifacts saved.")
+
 
     elif args.mode == 'benchmark':
         if args.model_path and os.path.exists(args.model_path):
