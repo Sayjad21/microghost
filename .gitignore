@@ -2,8 +2,10 @@ LLVIP/
 .venv/
 __pycache__/
 *.pyc
-checkpoints/
 exports/
 logs/
+rgb/
+thermal/
+runs/
 training_history.png
-confusion_matrix.png
+confusion_matrix.png    

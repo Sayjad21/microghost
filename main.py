@@ -27,19 +27,21 @@ def parse_args():
     # Train
     train_parser = subparsers.add_parser('train', help='Train the model')
     train_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET,
-                              choices=['llvip', 'kaist', 'flirv2'], help='Dataset to use')
+                              choices=['llvip', 'kaist', 'flirv2', 'camod3fd'], help='Dataset to use')
     train_parser.add_argument('--data-root', type=str, default=None,
                               help='Override dataset directory (default: data/<dataset>/)')
     train_parser.add_argument('--epochs', type=int, default=None, help='Override config epochs')
     train_parser.add_argument('--batch-size', type=int, default=None, help='Override config batch size')
     train_parser.add_argument('--num-workers', type=int, default=None, help='Override config num workers (CPU scaling)')
     train_parser.add_argument('--no-kmeans', action='store_true', help='Skip K-Means anchor optimization')
+    train_parser.add_argument('--resume-v1', action='store_true',
+                              help='Fine-tune from V1 checkpoint instead of random init')
 
     # Evaluate
     eval_parser = subparsers.add_parser('evaluate', help='Evaluate trained model')
     eval_parser.add_argument('--model-path', type=str, default=BEST_MODEL_PATH)
     eval_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET,
-                             choices=['llvip', 'kaist', 'flirv2'])
+                             choices=['llvip', 'kaist', 'flirv2', 'camod3fd'])
     eval_parser.add_argument('--data-root', type=str, default=None)
     eval_parser.add_argument('--conf-threshold', type=float, default=None,
                              help='Objectness confidence threshold (default: config)')
@@ -57,6 +59,8 @@ def parse_args():
     infer_parser.add_argument('--image-rgb', type=str, required=True, help='Path to RGB image')
     infer_parser.add_argument('--image-thermal', type=str, required=True, help='Path to thermal image')
     infer_parser.add_argument('--model-path', type=str, default=BEST_MODEL_PATH)
+    # ~line 58 — infer subparser
+    infer_parser.add_argument('--num-anchors', type=int, default=None,help='Override num_anchors (use 2 for v1 checkpoint)')
 
     # Export
     export_parser = subparsers.add_parser('export', help='Export model to ONNX/TFLite')
@@ -113,6 +117,16 @@ def main():
         # 4. Model & Trainer
         model = MicroGhostThermal()
 
+        # --- Fine-tune from V1 if requested (transfer learning) ---
+        if args.resume_v1:
+            from config import BEST_MODEL_V1_PATH
+            if os.path.exists(BEST_MODEL_V1_PATH):
+                ckpt = torch.load(BEST_MODEL_V1_PATH, map_location='cpu')
+                model.load_state_dict(ckpt['model_state_dict'], strict=False)
+                print(f"✅ Fine-tuning from V1: {BEST_MODEL_V1_PATH}")
+            else:
+                print(f"⚠️  --resume-v1: {BEST_MODEL_V1_PATH} not found — training from scratch")
+
         # --- TARGET HARDWARE PROFILING (ESP32-S3) ---
         print("\n" + "="*60)
         print("  TARGET HARDWARE PROFILING (ESP32-S3)")
@@ -163,16 +177,29 @@ def main():
 
     elif args.mode == 'infer':
         import cv2
-        engine = ThermalInferenceEngine(model_path=args.model_path)
-        img_rgb = cv2.imread(args.image_rgb, cv2.IMREAD_COLOR)
+        engine = ThermalInferenceEngine(model_path=args.model_path, override_num_anchors=args.num_anchors)
+        img_bgr = cv2.imread(args.image_rgb, cv2.IMREAD_COLOR)       # ← keep BGR for saving
         img_thermal = cv2.imread(args.image_thermal, cv2.IMREAD_GRAYSCALE)
-        
-        if img_rgb is None or img_thermal is None:
+
+        if img_bgr is None or img_thermal is None:
             print("Error: Could not load one or both images.")
             return
 
-        img_rgb = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2RGB)
-        detections = engine.detect(img_rgb, img_thermal)
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        detections = engine.detect_confirmed(img_rgb, img_thermal, lap_thresh=80.0) 
+        
+#       what lap_thresh=80.0 does is:
+
+#       For each thermal detection, crop that same bounding box region from the RGB image
+#       Convert it to grayscale and run the Laplacian filter
+#       Compute the variance of the result
+#       variance < 80 → the crop is too smooth → likely a flat hot surface → reject
+#       If variance ≥ 80 → the crop has real structure → likely a person → keep
+
+#       A car bonnet is a smooth painted metal surface — almost no texture in RGB, so its Laplacian variance might be 10–30. A person has hair, face, clothing folds, limb edges — easily 80–200+.
+#       The jump from 50 → 80 that fixed your case means the scooter/motorbike crop was sitting somewhere between 50 and 80 — enough texture to fool the looser threshold, but not enough to pass 80.
+#       The tradeoff to be aware of: if someone is wearing a plain single-colour outfit and standing far away (small box, low resolution crop), their variance could also dip below 80. If that becomes an issue during testing, you can combine it with the confidence score — e.g. only apply the Laplacian gate to boxes with combined_conf < 0.85, trusting very high confidence detections regardless.
+        
         print("\n--- Detection Results ---")
         if not detections:
             print("No intrusion detected.")
@@ -180,6 +207,36 @@ def main():
             for i, det in enumerate(detections):
                 print(f"[{i+1}] Intrusion! Conf: {det['combined_conf']:.2f} | "
                       f"Temp: {det.get('temp_c', 0)}°C | BBox: {det['bbox']}")
+
+        # ── Draw & save ──────────────────────────────────────────────────────
+        h, w = img_bgr.shape[:2]
+        vis = img_bgr.copy()
+        for det in detections:
+            x1, y1, x2, y2 = [int(v * d) for v, d in zip(det['bbox'], [w, h, w, h])]
+            cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            label = f"{det.get('class', '?')} {det['combined_conf']:.2f} {det.get('temp_c', 0)}degC"
+            cv2.putText(vis, label, (x1, max(y1 - 6, 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        os.makedirs('runs', exist_ok=True)
+        stem = os.path.splitext(os.path.basename(args.image_rgb))[0]
+        out_path = os.path.join('runs', f'{stem}_det.jpg')
+        cv2.imwrite(out_path, vis)
+        
+        #defining a color map for thermal visualization
+        colormap = cv2.COLORMAP_JET
+        # ── Save thermal with boxes too ───────────────────────────
+        #thermal_vis = cv2.cvtColor(img_thermal, cv2.COLOR_GRAY2BGR)
+        thermal_vis = cv2.applyColorMap(img_thermal, colormap)
+        for det in detections:
+            x1, y1, x2, y2 = [int(v * d) for v, d in zip(det['bbox'], [w, h, w, h])]
+            cv2.rectangle(thermal_vis, (x1, y1), (x2, y2), (0, 255, 255), 2)
+        out_thermal = os.path.join('runs', f'{stem}_thermal_det.jpg')
+        cv2.imwrite(out_thermal, thermal_vis)
+        print(f"Saved → {out_thermal}")
+        # ──────────────────────────────────────────────────────────
+        print(f"\nSaved → {out_path}")
+        os.startfile(out_path)
+        # ─────────────────────────────────────────────────────────────────────
 
     elif args.mode == 'evaluate':
         dataset_root = args.data_root or get_dataset_path(args.dataset)

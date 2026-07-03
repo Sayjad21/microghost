@@ -28,6 +28,7 @@ DATASET_SUBDIRS = {
     'llvip': 'llvip',
     'kaist': 'kaist-multispectral',
     'flirv2': 'FLIR_ADAS_v2',
+    'camod3fd': 'camo-m3fd',   # CAMO M3FD dataset (hvelesaca/camo-m3fd on Kaggle)
 }
 
 
@@ -84,6 +85,20 @@ DATASET_CONFIGS = {
         'classes': ['person', 'bike'],  # Mapped to person_visible
         'native_resolution': (640, 512),
     },
+    'camod3fd': {
+        'name': 'CAMO M3FD',
+        'description': 'Multi-Modal Multi-Spectral Detection Dataset (CAMO variant)',
+        'train_imgs':    'train/Imgs',
+        'train_thermal': 'train/Thermal',
+        'train_gt':      'train/GT',
+        'val_imgs':      'val/Imgs',
+        'val_thermal':   'val/Thermal',
+        'val_gt':        'val/GT',
+        'annotation_format': 'voc_xml_or_yolo',
+        'classes': ['People', 'Car', 'Bus', 'Motorcycle', 'Lamp', 'Truck'],
+        'image_ext': ['.jpg', '.png', '.jpeg'],
+        'native_resolution': (640, 480),
+    },
 }
 
 # Active dataset (change this based on what you upload to Kaggle)
@@ -131,7 +146,7 @@ LARGE_GRID_H = INPUT_HEIGHT // 16   # 8
 LARGE_GRID_W = INPUT_WIDTH // 16    # 10
 
 # Detection thresholds
-CONFIDENCE_THRESHOLD = 0.25     # Lower for small-model objectness scores
+CONFIDENCE_THRESHOLD = 0.10     # Lower for small-model objectness scores
 OBJ_METRIC_THRESHOLD = 0.25     # Threshold when computing objectness recall
 NMS_IOU_THRESHOLD = 0.45        # Non-Maximum Suppression IoU threshold
 MAX_DETECTIONS = 10             # Max simultaneous detections per frame
@@ -174,7 +189,7 @@ NUM_WORKERS = 0            # 0 avoids RAM spikes on 7GB systems
 
 # Loss weights — emphasize bbox regression (main generalization bottleneck)
 BBOX_WEIGHT = 3.0          # Bounding box regression
-OBJ_WEIGHT = 5.0           # Objectness (was 10; grid is mostly negatives)
+OBJ_WEIGHT = 7.0           # Objectness — raised 5→7 to improve recall (V2 recall was 0.58)
 CLASS_WEIGHT = 0.5         # Image-level class (trivial on LLVIP)
 
 # Learning rate schedule
