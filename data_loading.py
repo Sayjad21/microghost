@@ -158,63 +158,61 @@ class ForestPersonsBaseDataset(Dataset):
     """Base class for ForestPersons (RGB) and ForestPersonsIR (Thermal)."""
     
     def __init__(self, root_dir, split='train', modality='rgb', verbose=True):
+        import zipfile
+        import json
+        from collections import defaultdict
+        
         self.root_dir = root_dir
         self.split = split
         self.modality = modality  # 'rgb' or 'thermal'
         self.verbose = verbose
         
-        # Determine image dir
-        self.img_dir = os.path.join(root_dir, 'images', split)
-        if not os.path.exists(self.img_dir):
-            self.img_dir = os.path.join(root_dir, split, 'images') # Alternate structure
-            
-        self.annot_dir = os.path.join(root_dir, 'labels', split)
-        if not os.path.exists(self.annot_dir):
-            self.annot_dir = os.path.join(root_dir, split, 'labels')
-            
+        zip_path = os.path.join(root_dir, 'annotations.zip')
+        annot_dir = os.path.join(root_dir, 'annotations')
+        if os.path.exists(zip_path) and not os.path.exists(annot_dir):
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(root_dir)
+                
+        json_path = os.path.join(annot_dir, f"{split}.json")
         self.paired_paths = []
-        if os.path.exists(self.img_dir):
-            for ext in ('*.jpg', '*.png', '*.jpeg'):
-                for img_path in sorted(glob(os.path.join(self.img_dir, ext))):
-                    name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
-                    txt_path = os.path.join(self.annot_dir, name_no_ext + '.txt')
-                    self.paired_paths.append((img_path, txt_path))
+        self.annotations_map = defaultdict(list)
+        
+        if os.path.exists(json_path):
+            with open(json_path, 'r') as f:
+                coco_data = json.load(f)
+                
+            img_id_to_path = {}
+            for img in coco_data.get('images', []):
+                fname = img['file_name']
+                full_path = os.path.join(root_dir, fname)
+                if not os.path.exists(full_path):
+                    full_path = os.path.join(root_dir, 'images', split, os.path.basename(fname))
+                if not os.path.exists(full_path):
+                    full_path = os.path.join(root_dir, split, 'images', os.path.basename(fname))
+                img_id_to_path[img['id']] = full_path
+                
+            for ann in coco_data.get('annotations', []):
+                img_id = ann['image_id']
+                if img_id in img_id_to_path:
+                    x, y, w, h = ann['bbox']
+                    self.annotations_map[img_id].append({
+                        'class_id': map_person_class_id(),
+                        'xmin': max(0, int(x)), 'ymin': max(0, int(y)),
+                        'xmax': int(x + w), 'ymax': int(y + h)
+                    })
+                    
+            for img_id, path in img_id_to_path.items():
+                if os.path.exists(path):
+                    self.paired_paths.append((path, img_id))
                     
         if verbose:
             print(f" ForestPersons ({modality}) [{split}]: {len(self.paired_paths)} single-modality samples")
-
-    def _parse_yolo(self, txt_path, w_orig, h_orig):
-        annotations = []
-        if not os.path.exists(txt_path):
-            return annotations
-        try:
-            with open(txt_path, 'r') as f:
-                for line in f:
-                    parts = line.strip().split()
-                    if len(parts) >= 5:
-                        cls_id = int(parts[0])
-                        # Assuming class 0 is person
-                        if cls_id == 0:
-                            cx, cy, bw, bh = map(float, parts[1:5])
-                            xmin = max(0, int((cx - bw / 2) * w_orig))
-                            ymin = max(0, int((cy - bh / 2) * h_orig))
-                            xmax = min(w_orig, int((cx + bw / 2) * w_orig))
-                            ymax = min(h_orig, int((cy + bh / 2) * h_orig))
-                            if xmax > xmin and ymax > ymin:
-                                annotations.append({
-                                    'class_id': map_person_class_id(),
-                                    'xmin': xmin, 'ymin': ymin,
-                                    'xmax': xmax, 'ymax': ymax,
-                                })
-        except Exception:
-            pass
-        return annotations
 
     def __len__(self):
         return len(self.paired_paths)
 
     def __getitem__(self, idx):
-        img_path, txt_path = self.paired_paths[idx]
+        img_path, img_id = self.paired_paths[idx]
         
         # Load the single modality
         if self.modality == 'thermal':
@@ -228,7 +226,7 @@ class ForestPersonsBaseDataset(Dataset):
             # Fake thermal (black) for CMM handling
             image_thermal = np.zeros((h_orig, w_orig), dtype=np.uint8)
             
-        annotations = self._parse_yolo(txt_path, w_orig, h_orig)
+        annotations = self.annotations_map.get(img_id, [])
         return (image_rgb, image_thermal), annotations, (h_orig, w_orig)
 
 
