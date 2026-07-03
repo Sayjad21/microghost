@@ -73,7 +73,7 @@ def get_dataset_path(dataset_name):
                     return root
                     
             if dataset_name == 'camod3fd' and ('m3fd' in lower_root or 'camo' in lower_root):
-                if 'ir' in lower_dirs and 'vi' in lower_dirs:
+                if 'train' in lower_dirs and 'val' in lower_dirs:
                     return root
 
     return path
