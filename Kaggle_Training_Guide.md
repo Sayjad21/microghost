@@ -29,7 +29,7 @@ In your first notebook cell, clone the `microghost` repository and install the r
 # Install required packages
 !pip install opencv-python-headless
 !pip install huggingface_hub
-!pip install onnx onnx-tf tensorflow
+!pip install onnx
 ```
 
 ---
@@ -129,18 +129,18 @@ plt.show()
 
 ---
 
-## 6. Exporting the Model for ESP32-S3
+## 6. Exporting the Model
 
-To deploy the trained model to edge hardware, export it to ONNX and TFLite formats:
+To deploy the trained model to edge hardware, export it to ONNX format:
 
 ```bash
-# Cell 7: Export to ONNX and TFLite
-!python main.py export --model-path weights/best_model.pth --format tflite
+# Cell 7: Export to ONNX
+!python main.py export --model-path weights/best_model.pth --format onnx
 ```
 
 ### Downloading your Files
 Kaggle automatically saves anything placed in `/kaggle/working/`. 
-To download your final weights and TFLite model:
+To download your final weights and ONNX model:
 1. Look at the **Output** section in the right-hand panel.
 2. Navigate to `microghost/weights/` and `microghost/export/`.
-3. Click the **three dots (...)** next to `best_model.pth` and `microghost.tflite` to download them directly to your local machine.
+3. Click the **three dots (...)** next to `best_model.pth` and `microghost.onnx` to download them directly to your local machine.

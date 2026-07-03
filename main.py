@@ -19,7 +19,7 @@ from data_loading import create_dataloaders, create_phase_dataloaders
 from preprocessing import ThermalPreprocessor, analyze_dataset_anchors, GridEncoder
 from model import MicroGhostThermal, MicroGhostV2, print_model_analysis
 from training import Trainer, PhaseTrainer, plot_training_history
-from inference import ThermalInferenceEngine, benchmark_model, export_to_onnx, export_to_tflite
+from inference import ThermalInferenceEngine, benchmark_model, export_to_onnx
 from evaluation import run_detection_evaluation
 
 
@@ -69,7 +69,7 @@ def parse_args():
     # Export
     export_parser = subparsers.add_parser('export', help='Export model to ONNX/TFLite')
     export_parser.add_argument('--model-path', type=str, default=BEST_MODEL_PATH)
-    export_parser.add_argument('--format', type=str, choices=['onnx', 'tflite'], default='tflite')
+    export_parser.add_argument('--format', type=str, choices=['onnx'], default='onnx')
 
     # Benchmark
     bench_parser = subparsers.add_parser('benchmark', help='Benchmark model performance/size')
@@ -206,11 +206,10 @@ def main():
                 print(f"Diagnostics skipped or failed: {e}")
 
             # 3. Export
-            print("\n[3/3] Exporting to ONNX and TFLite...")
+            print("\n[3/3] Exporting to ONNX...")
             from inference import load_inference_model
             final_model, _ = load_inference_model(BEST_MODEL_PATH)
             export_to_onnx(final_model, ONNX_PATH)
-            export_to_tflite(ONNX_PATH, TFLITE_FP16_PATH, int8=False)
             print("\nPlug-and-Play Suite Complete! All artifacts saved.")
 
 
@@ -230,11 +229,8 @@ def main():
         from inference import load_inference_model
         model, _ = load_inference_model(args.model_path)
 
-        if args.format in ['onnx', 'tflite']:
+        if args.format == 'onnx':
             export_to_onnx(model, ONNX_PATH)
-
-        if args.format == 'tflite':
-            export_to_tflite(ONNX_PATH, TFLITE_FP16_PATH, int8=False)
 
     elif args.mode == 'infer':
         engine = ThermalInferenceEngine(model_path=args.model_path, override_num_anchors=args.num_anchors)

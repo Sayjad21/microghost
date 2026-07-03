@@ -329,61 +329,6 @@ def export_to_onnx(model, save_path):
     print(f"Exported ONNX model to {save_path}")
     return save_path
 
-def export_to_tflite(onnx_path, save_path, int8=False, dataset_loader=None):
-    """
-    Convert ONNX to TFLite (Requires ONNX-TF and TFLiteConverter).
-    This function outlines the process, but assumes appropriate TF env.
-    """
-    try:
-        import tensorflow as tf
-        from onnx_tf.backend import prepare
-        import onnx
-    except ImportError:
-        print("Export to TFLite requires tensorflow and onnx-tf.")
-        print("   Run: pip install tensorflow onnx onnx-tf")
-        return None
-
-    print(f"Converting ONNX ({onnx_path}) to TensorFlow SavedModel...")
-    tf_model_dir = onnx_path.replace('.onnx', '_tf')
-
-    # 1. ONNX -> TF
-    onnx_model = onnx.load(onnx_path)
-    tf_rep = prepare(onnx_model)
-    tf_rep.export_graph(tf_model_dir)
-
-    # 2. TF -> TFLite
-    print(f"Converting TF SavedModel to TFLite...")
-    converter = tf.lite.TFLiteConverter.from_saved_model(tf_model_dir)
-
-    if int8:
-        print("Applying INT8 Quantization...")
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]
-
-        # Representative dataset generator for calibration
-        def representative_data_gen():
-            if dataset_loader is None:
-                for _ in range(100):
-                    yield [np.random.rand(1, 4, INPUT_HEIGHT, INPUT_WIDTH).astype(np.float32)]
-            else:
-                for i, (images, _) in enumerate(dataset_loader):
-                    if i >= 100: break
-                    img_np = images[0:1].cpu().numpy().astype(np.float32)
-                    yield [img_np]
-
-        converter.representative_dataset = representative_data_gen
-        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-        converter.inference_input_type = tf.int8
-        converter.inference_output_type = tf.int8
-
-    tflite_model = converter.convert()
-
-    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
-    with open(save_path, 'wb') as f:
-        f.write(tflite_model)
-
-    size_kb = len(tflite_model) / 1024
-    print(f"Exported TFLite model to {save_path} ({size_kb:.1f} KB)")
-    return save_path
 
 
 def benchmark_model(model):
