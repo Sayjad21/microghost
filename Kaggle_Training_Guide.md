@@ -72,22 +72,12 @@ For **LLVIP** (Phase 1) and **Camo-M3FD** (Phase 3), it is highly recommended to
 3. Kaggle mounts these datasets in the `/kaggle/input/` directory.
 
 ### C. Linking Datasets to the Code
-Since the code expects datasets in specific locations (or defined by environment variables), you can create symbolic links to map Kaggle's `/kaggle/input/` paths to the `data/` folder the code expects.
+Because I have just added **Kaggle Auto-Discovery** to the pipeline, you do **NOT** need to create symbolic links manually anymore!
 
-```bash
-# Cell 2: Map Kaggle Datasets
-# NOTE: Replace the paths below with the actual paths shown in your Kaggle "Data" panel
+As long as you clicked "Add Data" and the datasets are somewhere in `/kaggle/input/`, the code will automatically scan the input directory, find the `visible`/`infrared` folders for LLVIP, and automatically link them. 
 
-!mkdir -p data
+You can completely skip the `!ln -s` commands in Cell 2.
 
-# Link LLVIP
-!ln -s /kaggle/input/llvip-dataset data/llvip
-
-# Link Camo-M3FD
-!ln -s /kaggle/input/camo-m3fd-dataset data/camod3fd
-```
-
-*Alternatively, you can pass `--data-root` via CLI if you are only training on a single dataset, but for multi-phase training, symlinking to the `data/` folder is the cleanest approach.*
 
 ---
 

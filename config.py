@@ -53,10 +53,29 @@ def get_dataset_path(dataset_name):
     path = os.path.join(DATASET_ROOT, subdir)
     if os.path.isdir(path):
         return path
-    # Fallback: dataset folder at project root
     alt = os.path.join(_PROJECT_DIR, subdir.upper() if dataset_name == 'llvip' else subdir)
     if os.path.isdir(alt):
         return alt
+        
+    # Kaggle Auto-Discovery (Makes symlinks optional on Kaggle)
+    kaggle_input = '/kaggle/input'
+    if os.path.exists(kaggle_input):
+        for root, dirs, _ in os.walk(kaggle_input):
+            # Limit search depth to avoid hanging
+            if root.count(os.sep) - kaggle_input.count(os.sep) > 3:
+                continue
+                
+            lower_root = root.lower()
+            lower_dirs = [d.lower() for d in dirs]
+            
+            if dataset_name == 'llvip' and 'llvip' in lower_root:
+                if 'visible' in lower_dirs and 'infrared' in lower_dirs:
+                    return root
+                    
+            if dataset_name == 'camod3fd' and ('m3fd' in lower_root or 'camo' in lower_root):
+                if 'ir' in lower_dirs and 'vi' in lower_dirs:
+                    return root
+
     return path
 
 # Supported dataset configurations
