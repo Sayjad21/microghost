@@ -1,7 +1,8 @@
 """
-MicroGhost-Thermal: Main Entry Point
-======================================
+MicroGhost-Thermal: Main Entry Point (V2)
+===========================================
 CLI orchestration for the ESP32-S3 thermal intrusion detection system.
+Supports 4-phase V2 training, dynamic evaluation, and edge inference.
 """
 
 import os
@@ -11,31 +12,35 @@ import numpy as np
 
 from config import (
     ACTIVE_DATASET, DATASET_ROOT, MODEL_SAVE_DIR, EXPORT_DIR, LOG_DIR,
-    BEST_MODEL_PATH, ONNX_PATH, TFLITE_FP16_PATH, get_dataset_path, NUM_ANCHORS
+    BEST_MODEL_PATH, ONNX_PATH, TFLITE_FP16_PATH, get_dataset_path, NUM_ANCHORS,
+    TRAINING_PHASES
 )
-from data_loading import create_dataloaders
+from data_loading import create_dataloaders, create_phase_dataloaders
 from preprocessing import ThermalPreprocessor, analyze_dataset_anchors, GridEncoder
-from model import MicroGhostThermal, print_model_analysis
-from training import Trainer, plot_training_history
+from model import MicroGhostThermal, MicroGhostV2, print_model_analysis
+from training import Trainer, PhaseTrainer, plot_training_history
 from inference import ThermalInferenceEngine, benchmark_model, export_to_onnx, export_to_tflite
 from evaluation import run_detection_evaluation
 
+
 def parse_args():
-    parser = argparse.ArgumentParser(description="MicroGhost-Thermal Intrusion Detection")
+    parser = argparse.ArgumentParser(description="MicroGhost-Thermal Intrusion Detection (V2)")
     subparsers = parser.add_subparsers(dest='mode', help='Operation mode')
 
     # Train
     train_parser = subparsers.add_parser('train', help='Train the model')
+    train_parser.add_argument('--v1', action='store_true', help='Train legacy V1 model (single phase)')
     train_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET,
-                              choices=['llvip', 'kaist', 'flirv2', 'camod3fd'], help='Dataset to use')
+                              choices=['llvip', 'kaist', 'flirv2', 'camod3fd'], help='Dataset for V1 training')
     train_parser.add_argument('--data-root', type=str, default=None,
-                              help='Override dataset directory (default: data/<dataset>/)')
+                              help='Override dataset directory')
     train_parser.add_argument('--epochs', type=int, default=None, help='Override config epochs')
     train_parser.add_argument('--batch-size', type=int, default=None, help='Override config batch size')
-    train_parser.add_argument('--num-workers', type=int, default=None, help='Override config num workers (CPU scaling)')
+    train_parser.add_argument('--num-workers', type=int, default=0, help='Override config num workers (CPU scaling)')
     train_parser.add_argument('--no-kmeans', action='store_true', help='Skip K-Means anchor optimization')
-    train_parser.add_argument('--resume-v1', action='store_true',
-                              help='Fine-tune from V1 checkpoint instead of random init')
+    train_parser.add_argument('--resume-v1', action='store_true', help='Fine-tune from V1 checkpoint')
+    train_parser.add_argument('--phase', type=int, default=None, choices=[1, 2, 3, 4],
+                              help='Run a specific V2 training phase (1-4). If omitted, runs all phases.')
 
     # Evaluate
     eval_parser = subparsers.add_parser('evaluate', help='Evaluate trained model')
@@ -51,7 +56,7 @@ def parse_args():
     # Diagnose
     diagnose_parser = subparsers.add_parser('diagnose', help='Run deep error profiling and save images')
     diagnose_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET,
-                                 choices=['llvip', 'kaist', 'flirv2'])
+                                 choices=['llvip', 'kaist', 'flirv2', 'camod3fd'])
     diagnose_parser.add_argument('--data-root', type=str, default=None)
 
     # Infer
@@ -59,8 +64,7 @@ def parse_args():
     infer_parser.add_argument('--image-rgb', type=str, required=True, help='Path to RGB image')
     infer_parser.add_argument('--image-thermal', type=str, required=True, help='Path to thermal image')
     infer_parser.add_argument('--model-path', type=str, default=BEST_MODEL_PATH)
-    # ~line 58 — infer subparser
-    infer_parser.add_argument('--num-anchors', type=int, default=None,help='Override num_anchors (use 2 for v1 checkpoint)')
+    infer_parser.add_argument('--num-anchors', type=int, default=None, help='Override num_anchors')
 
     # Export
     export_parser = subparsers.add_parser('export', help='Export model to ONNX/TFLite')
@@ -69,7 +73,7 @@ def parse_args():
 
     # Benchmark
     bench_parser = subparsers.add_parser('benchmark', help='Benchmark model performance/size')
-    bench_parser.add_argument('--model-path', type=str, default=None, help='Load specific model (default: uninitialized)')
+    bench_parser.add_argument('--model-path', type=str, default=None, help='Load specific model')
 
     return parser.parse_args()
 
@@ -81,104 +85,125 @@ def main():
     os.makedirs(LOG_DIR, exist_ok=True)
 
     if args.mode == 'train':
-        dataset_root = args.data_root or get_dataset_path(args.dataset)
-        print(f"Initializing training pipeline with dataset: {args.dataset}")
-        print(f"Dataset path: {dataset_root}")
-
-        # 1. Base preprocessor
+        print(f"Initializing training pipeline... (V2 mode: {not args.v1})")
+        
         encoder = GridEncoder()
         preprocessor = ThermalPreprocessor(encoder=encoder)
+        opt_sizes = None
 
-        # 2. Dataloaders
-        train_loader, val_loader = create_dataloaders(
-            dataset_name=args.dataset,
-            preprocessor=preprocessor,
-            dataset_root=dataset_root,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers
-        )
+        if args.v1:
+            # =================================================================
+            # V1 TRAINING PIPELINE (Legacy Single Phase)
+            # =================================================================
+            dataset_root = args.data_root or get_dataset_path(args.dataset)
+            print(f"Dataset path: {dataset_root}")
 
-        # 3. K-Means Anchor Optimization
-        if not args.no_kmeans:
-            # We access the raw base dataset for K-Means
-            opt_ratios, opt_sizes = analyze_dataset_anchors(train_loader.dataset.base_dataset, num_anchors=NUM_ANCHORS)
-            encoder.update_anchors(opt_ratios, opt_sizes)
-            # Re-initialize dataloaders with updated encoder targets
             train_loader, val_loader = create_dataloaders(
-                dataset_name=args.dataset,
-                dataset_root=dataset_root,
-                preprocessor=preprocessor,
-                batch_size=args.batch_size,
+                dataset_name=args.dataset, preprocessor=preprocessor,
+                dataset_root=dataset_root, batch_size=args.batch_size,
                 num_workers=args.num_workers
             )
+
+            if not args.no_kmeans:
+                opt_ratios, opt_sizes = analyze_dataset_anchors(
+                    train_loader.dataset.base_dataset, num_anchors=NUM_ANCHORS)
+                encoder.update_anchors(opt_ratios, opt_sizes)
+                train_loader, val_loader = create_dataloaders(
+                    dataset_name=args.dataset, dataset_root=dataset_root,
+                    preprocessor=preprocessor, batch_size=args.batch_size,
+                    num_workers=args.num_workers
+                )
+
+            model = MicroGhostThermal()
+            if args.resume_v1:
+                from config import BEST_MODEL_V1_PATH
+                if os.path.exists(BEST_MODEL_V1_PATH):
+                    ckpt = torch.load(BEST_MODEL_V1_PATH, map_location='cpu')
+                    model.load_state_dict(ckpt['model_state_dict'], strict=False)
+                    print(f"  Fine-tuning from V1: {BEST_MODEL_V1_PATH}")
+
+            print_model_analysis(model)
+            benchmark_model(model)
+
+            trainer = Trainer(
+                model=model, train_loader=train_loader, val_loader=val_loader,
+                epochs=args.epochs, anchor_sizes=opt_sizes
+            )
+            history = trainer.fit(save_path=BEST_MODEL_PATH)
+            plot_training_history(history, save_path='training_history_v1.png')
+
         else:
-            opt_sizes = None
+            # =================================================================
+            # V2 TRAINING PIPELINE (Multi-Phase)
+            # =================================================================
+            if not args.no_kmeans:
+                # Use Phase 1 (LLVIP) for anchor sizing
+                phase1_train, _ = create_phase_dataloaders(1, preprocessor)
+                
+                # Combine datasets from phase 1 for anchor analysis
+                from torch.utils.data import ConcatDataset
+                
+                # We need raw datasets. Let's just use the default sizes if K-means is too complex
+                # to extract from ConcatDataset. Or we can just use the provided opt sizes.
+                # In V2, we rely on the DEFAULT_ANCHOR_SIZES in config, which we tuned to the combined set.
+                print("Skipping K-Means for V2 multi-phase (using config defaults).")
+            
+            model = MicroGhostV2(training_mode=True)
+            print_model_analysis(model)
+            benchmark_model(model)
 
-        # 4. Model & Trainer
-        model = MicroGhostThermal()
+            phases_to_run = [args.phase] if args.phase else [1, 2, 3, 4]
 
-        # --- Fine-tune from V1 if requested (transfer learning) ---
-        if args.resume_v1:
-            from config import BEST_MODEL_V1_PATH
-            if os.path.exists(BEST_MODEL_V1_PATH):
-                ckpt = torch.load(BEST_MODEL_V1_PATH, map_location='cpu')
-                model.load_state_dict(ckpt['model_state_dict'], strict=False)
-                print(f"✅ Fine-tuning from V1: {BEST_MODEL_V1_PATH}")
-            else:
-                print(f"⚠️  --resume-v1: {BEST_MODEL_V1_PATH} not found — training from scratch")
+            # If starting from a later phase, attempt to load previous best model
+            if phases_to_run[0] > 1 and os.path.exists(BEST_MODEL_PATH):
+                print(f"Loading previous weights from {BEST_MODEL_PATH} before starting Phase {phases_to_run[0]}")
+                ckpt = torch.load(BEST_MODEL_PATH, map_location='cpu')
+                model.load_state_dict(ckpt['model_state_dict'])
+            
+            for phase in phases_to_run:
+                train_loader, val_loader = create_phase_dataloaders(
+                    phase=phase, preprocessor=preprocessor,
+                    batch_size=args.batch_size, num_workers=args.num_workers
+                )
+                
+                trainer = PhaseTrainer(
+                    model=model, train_loader=train_loader, val_loader=val_loader,
+                    phase=phase, anchor_sizes=opt_sizes
+                )
+                
+                # Use fewer epochs if --epochs is specified (for quick testing)
+                if args.epochs:
+                    trainer.epochs = args.epochs
+                    
+                history = trainer.fit(save_path=BEST_MODEL_PATH)
+                plot_training_history(history, save_path=f'training_history_v2_phase{phase}.png')
 
-        # --- TARGET HARDWARE PROFILING (ESP32-S3) ---
-        print("\n" + "="*60)
-        print("  TARGET HARDWARE PROFILING (ESP32-S3)")
-        print("="*60)
-        from model import print_model_analysis
-        from inference import benchmark_model
-        
-        print_model_analysis(model)
-        benchmark_model(model)
-        print("="*60 + "\n")
-        # --------------------------------------------
-
-        trainer = Trainer(
-            model=model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            epochs=args.epochs,
-            anchor_sizes=opt_sizes
-        )
-
-        # 5. Train
-        history = trainer.fit(save_path=BEST_MODEL_PATH)
-        plot_training_history(history)
 
     elif args.mode == 'benchmark':
         if args.model_path and os.path.exists(args.model_path):
             from inference import load_inference_model
-            model = load_inference_model(args.model_path)
+            model, _ = load_inference_model(args.model_path)
             print("Loaded trained model for benchmark.")
         else:
-            model = MicroGhostThermal()
-            print("Using newly initialized model for benchmark.")
+            model = MicroGhostV2(training_mode=False)
+            print("Using newly initialized V2 model for benchmark.")
 
         print_model_analysis(model)
         benchmark_model(model)
 
     elif args.mode == 'export':
         from inference import load_inference_model
-        model = load_inference_model(args.model_path)
+        model, _ = load_inference_model(args.model_path)
 
-        if args.format == 'onnx' or args.format == 'tflite':
+        if args.format in ['onnx', 'tflite']:
             export_to_onnx(model, ONNX_PATH)
 
         if args.format == 'tflite':
-            # Note: For real FP16 quantization, you don't necessarily need calibration
-            # but it is usually exported directly via TFLite converter standard FP16 flag.
-            export_to_tflite(ONNX_PATH, TFLITE_FP16_PATH, int8=False) # int8=False for fp16 target handling in future implementation
+            export_to_tflite(ONNX_PATH, TFLITE_FP16_PATH, int8=False)
 
     elif args.mode == 'infer':
-        import cv2
         engine = ThermalInferenceEngine(model_path=args.model_path, override_num_anchors=args.num_anchors)
-        img_bgr = cv2.imread(args.image_rgb, cv2.IMREAD_COLOR)       # ← keep BGR for saving
+        img_bgr = cv2.imread(args.image_rgb, cv2.IMREAD_COLOR)
         img_thermal = cv2.imread(args.image_thermal, cv2.IMREAD_GRAYSCALE)
 
         if img_bgr is None or img_thermal is None:
@@ -188,27 +213,16 @@ def main():
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         detections = engine.detect_confirmed(img_rgb, img_thermal, lap_thresh=80.0) 
         
-#       what lap_thresh=80.0 does is:
-
-#       For each thermal detection, crop that same bounding box region from the RGB image
-#       Convert it to grayscale and run the Laplacian filter
-#       Compute the variance of the result
-#       variance < 80 → the crop is too smooth → likely a flat hot surface → reject
-#       If variance ≥ 80 → the crop has real structure → likely a person → keep
-
-#       A car bonnet is a smooth painted metal surface — almost no texture in RGB, so its Laplacian variance might be 10–30. A person has hair, face, clothing folds, limb edges — easily 80–200+.
-#       The jump from 50 → 80 that fixed your case means the scooter/motorbike crop was sitting somewhere between 50 and 80 — enough texture to fool the looser threshold, but not enough to pass 80.
-#       The tradeoff to be aware of: if someone is wearing a plain single-colour outfit and standing far away (small box, low resolution crop), their variance could also dip below 80. If that becomes an issue during testing, you can combine it with the confidence score — e.g. only apply the Laplacian gate to boxes with combined_conf < 0.85, trusting very high confidence detections regardless.
-        
         print("\n--- Detection Results ---")
         if not detections:
             print("No intrusion detected.")
         else:
             for i, det in enumerate(detections):
+                gw = det.get('gate_w', {})
+                gw_str = f"[Gate R:{gw.get('rgb',0):.2f}/T:{gw.get('thm',0):.2f}] " if gw else ""
                 print(f"[{i+1}] Intrusion! Conf: {det['combined_conf']:.2f} | "
-                      f"Temp: {det.get('temp_c', 0)}°C | BBox: {det['bbox']}")
+                      f"Temp: {det.get('temp_c', 0)}°C | {gw_str}BBox: {det['bbox']}")
 
-        # ── Draw & save ──────────────────────────────────────────────────────
         h, w = img_bgr.shape[:2]
         vis = img_bgr.copy()
         for det in detections:
@@ -222,21 +236,21 @@ def main():
         out_path = os.path.join('runs', f'{stem}_det.jpg')
         cv2.imwrite(out_path, vis)
         
-        #defining a color map for thermal visualization
         colormap = cv2.COLORMAP_JET
-        # ── Save thermal with boxes too ───────────────────────────
-        #thermal_vis = cv2.cvtColor(img_thermal, cv2.COLOR_GRAY2BGR)
         thermal_vis = cv2.applyColorMap(img_thermal, colormap)
         for det in detections:
             x1, y1, x2, y2 = [int(v * d) for v, d in zip(det['bbox'], [w, h, w, h])]
             cv2.rectangle(thermal_vis, (x1, y1), (x2, y2), (0, 255, 255), 2)
         out_thermal = os.path.join('runs', f'{stem}_thermal_det.jpg')
         cv2.imwrite(out_thermal, thermal_vis)
+        
         print(f"Saved → {out_thermal}")
-        # ──────────────────────────────────────────────────────────
-        print(f"\nSaved → {out_path}")
-        os.startfile(out_path)
-        # ─────────────────────────────────────────────────────────────────────
+        print(f"Saved → {out_path}")
+        
+        try:
+            os.startfile(out_path)
+        except AttributeError:
+            pass # os.startfile is Windows only
 
     elif args.mode == 'evaluate':
         dataset_root = args.data_root or get_dataset_path(args.dataset)

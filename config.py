@@ -1,11 +1,15 @@
 """
-MicroGhost-Thermal: Configuration Module
-==========================================
-Central configuration for the ESP32-S3 thermal intrusion detection system.
+MicroGhost-Thermal: Configuration Module (V2)
+===============================================
+Central configuration for MicroGhost V2 dual-branch architecture.
 
-Target Hardware: ESP32-S3 (512KB SRAM, 8MB Flash, 240MHz dual-core)
-Sensor: FLIR Lepton 3.5 (160×120) or FLIR Lepton 2.5 (80×60) via SPI
-Model Framework: TensorFlow Lite Micro (deployed), PyTorch (training)
+V2 Changes:
+- Dual independent branches (RGB + Thermal) with separate weights
+- EnergyGate fusion at Scale 2
+- BiFusion Neck (replaces FPN)
+- 3 anchors per cell
+- Phase-based training with CMM
+- Accuracy-first design (optimize for ESP32 later)
 """
 
 import os
@@ -19,16 +23,24 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 # ============================================================================
 # DATASET CONFIGURATION
 # ============================================================================
-# Default local data directory (override with MICROGHOST_DATA_ROOT env var)
 _PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_ROOT = os.environ.get('MICROGHOST_DATA_ROOT', os.path.join(_PROJECT_DIR, 'data'))
 
 # Per-dataset subdirectory names under DATASET_ROOT
 DATASET_SUBDIRS = {
     'llvip': 'llvip',
+    'forestpersons': 'ForestPersons',
+    'forestpersonsir': 'ForestPersonsIR',
+    'camod3fd': 'camo-m3fd',
+    # Legacy (loaders kept for backward compat, not used in V2 training)
     'kaist': 'kaist-multispectral',
     'flirv2': 'FLIR_ADAS_v2',
-    'camod3fd': 'camo-m3fd',   # CAMO M3FD dataset (hvelesaca/camo-m3fd on Kaggle)
+}
+
+# HuggingFace dataset identifiers (for auto-download)
+HUGGINGFACE_DATASETS = {
+    'forestpersons': 'etri/ForestPersons',
+    'forestpersonsir': 'etri/ForestPersonsIR',
 }
 
 
@@ -41,7 +53,7 @@ def get_dataset_path(dataset_name):
     path = os.path.join(DATASET_ROOT, subdir)
     if os.path.isdir(path):
         return path
-    # Fallback: dataset folder at project root (e.g. ./LLVIP)
+    # Fallback: dataset folder at project root
     alt = os.path.join(_PROJECT_DIR, subdir.upper() if dataset_name == 'llvip' else subdir)
     if os.path.isdir(alt):
         return alt
@@ -54,50 +66,68 @@ DATASET_CONFIGS = {
         'description': 'Low-Light Vision Infrared-Visible Paired Dataset',
         'infrared_train': 'infrared/train',
         'infrared_test': 'infrared/test',
-        'visible_train': 'visible/train',   # Not used, but available
-        'visible_test': 'visible/test',      # Not used, but available
-        'annotations_train': 'Annotations',  # VOC XML format
+        'visible_train': 'visible/train',
+        'visible_test': 'visible/test',
+        'annotations_train': 'Annotations',
         'annotations_test': 'Annotations',
         'annotation_format': 'voc_xml',
         'classes': ['Pedestrian'],
         'image_ext': ['.jpg', '.png', '.jpeg'],
-        'native_resolution': (1280, 1024),   # W x H
+        'native_resolution': (1280, 1024),
+        'modality': 'paired',  # synchronized RGB+Thermal
     },
-    'kaist': {
-        'name': 'KAIST Multispectral Pedestrian',
-        'description': 'KAIST Multispectral Pedestrian Detection Benchmark',
-        'image_pattern': 'set{:02d}/V{:03d}/lwir/I{:05d}.png',
-        'annotation_pattern': 'set{:02d}/V{:03d}/annotations/I{:05d}.txt',
-        'annotation_format': 'kaist_txt',
-        'classes': ['person', 'cyclist', 'people'],  # Mapped to person_visible
-        'native_resolution': (640, 480),     # W x H
+    'forestpersons': {
+        'name': 'ForestPersons (RGB)',
+        'description': 'Under-canopy SAR person detection — RGB only',
+        'huggingface_id': 'etri/ForestPersons',
+        'annotation_format': 'yolo_txt',
+        'classes': ['person'],
+        'image_ext': ['.jpg', '.png', '.jpeg'],
+        'native_resolution': (640, 480),
+        'modality': 'rgb_only',  # CMM-RXTO: thermal zeroed
     },
-    'flirv2': {
-        'name': 'FLIR ADAS v2',
-        'description': 'FLIR Thermal Dataset v2',
-        'train_dir': 'images_thermal_train',
-        'val_dir': 'images_thermal_val',
-        'rgb_train_dir': 'images_rgb_train',
-        'rgb_val_dir': 'images_rgb_val',
-        'annotations_train': 'annotations/thermal_annotations_train.json',
-        'annotations_val': 'annotations/thermal_annotations_val.json',
-        'annotation_format': 'coco_json',
-        'classes': ['person', 'bike'],  # Mapped to person_visible
-        'native_resolution': (640, 512),
+    'forestpersonsir': {
+        'name': 'ForestPersons IR (Thermal)',
+        'description': 'Under-canopy SAR person detection — Thermal/IR only',
+        'huggingface_id': 'etri/ForestPersonsIR',
+        'annotation_format': 'yolo_txt',
+        'classes': ['person'],
+        'image_ext': ['.jpg', '.png', '.jpeg'],
+        'native_resolution': (640, 480),
+        'modality': 'thermal_only',  # CMM-ROTX: RGB zeroed
     },
     'camod3fd': {
         'name': 'CAMO M3FD',
-        'description': 'Multi-Modal Multi-Spectral Detection Dataset (CAMO variant)',
+        'description': 'Cross-spectral camouflaged pedestrian detection (mask→box)',
         'train_imgs':    'train/Imgs',
         'train_thermal': 'train/Thermal',
         'train_gt':      'train/GT',
         'val_imgs':      'val/Imgs',
         'val_thermal':   'val/Thermal',
         'val_gt':        'val/GT',
-        'annotation_format': 'voc_xml_or_yolo',
+        'annotation_format': 'mask_to_box',  # pixel masks → bounding boxes
         'classes': ['People', 'Car', 'Bus', 'Motorcycle', 'Lamp', 'Truck'],
         'image_ext': ['.jpg', '.png', '.jpeg'],
         'native_resolution': (640, 480),
+        'modality': 'paired',
+    },
+    # Legacy datasets (loaders available, not in V2 training pipeline)
+    'kaist': {
+        'name': 'KAIST Multispectral Pedestrian',
+        'description': 'KAIST — urban driving, NOT used in V2 training',
+        'image_pattern': 'set{:02d}/V{:03d}/lwir/I{:05d}.png',
+        'annotation_format': 'kaist_txt',
+        'classes': ['person', 'cyclist', 'people'],
+        'native_resolution': (640, 480),
+        'modality': 'paired',
+    },
+    'flirv2': {
+        'name': 'FLIR ADAS v2',
+        'description': 'FLIR Thermal v2 — automotive, NOT used in V2 training',
+        'annotation_format': 'coco_json',
+        'classes': ['person', 'bike'],
+        'native_resolution': (640, 512),
+        'modality': 'paired',
     },
 }
 
@@ -107,17 +137,14 @@ ACTIVE_DATASET = 'llvip'
 # ============================================================================
 # MODEL INPUT CONFIGURATION
 # ============================================================================
-# Input size for ESP32-S3 deployment
-# FLIR Lepton: 160x120. We pad 4 pixels top/bottom to get exactly 160x128
-# which is perfectly divisible by 32 for the 4 FPN downsampling stages.
 INPUT_WIDTH = 160
 INPUT_HEIGHT = 128
-INPUT_SIZE = (INPUT_HEIGHT, INPUT_WIDTH) # (128, 160)
+INPUT_SIZE = (INPUT_HEIGHT, INPUT_WIDTH)  # (128, 160)
 
 INPUT_CHANNELS = 4   # 3 (RGB) + 1 (Thermal)
 
 # ============================================================================
-# TARGET CLASSES (BGB MISSION CRITICAL)
+# TARGET CLASSES
 # ============================================================================
 CLASS_MAP = {
     'background': 0,
@@ -125,96 +152,182 @@ CLASS_MAP = {
     'person_camouflaged': 2,
     'vehicle_boat': 3
 }
-NUM_CLASSES = len(CLASS_MAP)  # 4: background + 3 intrusion types
+NUM_CLASSES = len(CLASS_MAP)  # 4
 
-# Anchor configuration (optimized for human thermal signatures and side-by-side)
+# Anchor configuration
 NUM_ANCHORS = 3
 
-# Default anchor aspect ratios (h/w) for human shapes in thermal
-# 1.2: Scooter drivers / grouped humans
-# 2.3: Standing/walking close
-# 3.5: Standing distant
+# Default anchor aspect ratios (h/w)
 DEFAULT_ANCHOR_RATIOS = [1.2, 2.3, 3.5]
 
 # Default anchor sizes (relative to image, sqrt of area)
 DEFAULT_ANCHOR_SIZES = [0.108, 0.145, 0.180]
 
-# Grid sizes derived from input height/width
+# Grid sizes
 SMALL_GRID_H = INPUT_HEIGHT // 8    # 16
 SMALL_GRID_W = INPUT_WIDTH // 8     # 20
 LARGE_GRID_H = INPUT_HEIGHT // 16   # 8
 LARGE_GRID_W = INPUT_WIDTH // 16    # 10
 
-# Detection thresholds
-CONFIDENCE_THRESHOLD = 0.10     # Lower for small-model objectness scores
-OBJ_METRIC_THRESHOLD = 0.25     # Threshold when computing objectness recall
-NMS_IOU_THRESHOLD = 0.45        # Non-Maximum Suppression IoU threshold
-MAX_DETECTIONS = 10             # Max simultaneous detections per frame
+# Detection thresholds (split for different use cases)
+CONFIDENCE_THRESHOLD = 0.25       # Default for inference (conservative)
+EVAL_CONFIDENCE_THRESHOLD = 0.10  # For mAP evaluation (high recall)
+NMS_IOU_THRESHOLD = 0.35          # V2: tighter NMS for adjacent person detection
+MAX_DETECTIONS = 10
 
-# Post-decode filters (remove corner artifacts and tiny false positives)
-MIN_BOX_WIDTH_NORM = 0.03       # Min box width relative to image
-MIN_BOX_HEIGHT_NORM = 0.05      # Min box height relative to image
-MIN_BOX_AREA_NORM = 0.002       # Min box area (width * height)
-CORNER_FILTER_X = 0.12          # Reject thin boxes in top-left corner band
+# Log clamp range for bbox encoding/decoding
+LOG_CLAMP_MIN = -4.5
+LOG_CLAMP_MAX = 4.5
+
+# Objectness metric threshold for recall computation
+OBJ_METRIC_THRESHOLD = 0.25
+
+# Post-decode filters
+MIN_BOX_WIDTH_NORM = 0.03
+MIN_BOX_HEIGHT_NORM = 0.05
+MIN_BOX_AREA_NORM = 0.002
+CORNER_FILTER_X = 0.12
 CORNER_FILTER_Y = 0.10
-CORNER_MAX_WIDTH = 0.10         # Corner band only applies below this width
+CORNER_MAX_WIDTH = 0.10
 
 # ============================================================================
-# MODEL ARCHITECTURE CONFIGURATION
+# V1 MODEL ARCHITECTURE (kept for backward compatibility)
 # ============================================================================
-# Dual-Branch Stem
-RGB_STEM_CHANNELS = 16     # RGB input (3) → 16
-THERMAL_STEM_CHANNELS = 16 # Thermal input (1) → 16
-STEM_CHANNELS = RGB_STEM_CHANNELS + THERMAL_STEM_CHANNELS # Fused → 32
+RGB_STEM_CHANNELS = 16
+THERMAL_STEM_CHANNELS = 16
+STEM_CHANNELS = RGB_STEM_CHANNELS + THERMAL_STEM_CHANNELS  # 32
 
-# Backbone Stages
-SCALE1_CHANNELS = 32       # Backbone stage 1
-SCALE2_CHANNELS = 48       # Backbone stage 2
-SCALE3_CHANNELS = 96       # Backbone stage 3
-FPN_CHANNELS = 64          # FPN output
-CLASSIFIER_HIDDEN_DIM = 64 # Classifier FC hidden
-
-# Expansion ratio for InvertedResidual blocks
-EXPAND_RATIO = 3           # Reduced to 3
+SCALE1_CHANNELS = 32
+SCALE2_CHANNELS = 48
+SCALE3_CHANNELS = 96
+FPN_CHANNELS = 64
+CLASSIFIER_HIDDEN_DIM = 64
+EXPAND_RATIO = 3
 
 # ============================================================================
-# TRAINING CONFIGURATION (tuned for local CPU — Acer Aspire 3, 7GB RAM)
+# V2 MODEL ARCHITECTURE (Dual-Branch, Accuracy-First)
 # ============================================================================
-BATCH_SIZE = 8             # Low RAM; increase to 16 if training is stable
-LEARNING_RATE = 1e-3       # Initial learning rate
-WEIGHT_DECAY = 5e-4        # Slightly stronger L2 for val generalization
-EPOCHS = 50                # Enough for demo; early stopping may finish sooner
-PATIENCE = 10              # Early stopping patience
-NUM_WORKERS = 0            # 0 avoids RAM spikes on 7GB systems
+# Per-branch channel widths (each branch processes one modality independently)
+V2_STEM_CHANNELS = 16           # Per-branch stem output
+V2_SCALE1_CHANNELS = 24         # Per-branch Scale 1 (Ghost Bottleneck)
+V2_SCALE2_CHANNELS = 32         # Per-branch Scale 2 → EnergyGate
+V2_SCALE3_CHANNELS = 48         # Per-branch Scale 3 → BiFusion Neck
+V2_BIFUSION_CHANNELS = 48       # BiFusion Neck output (feeds heads + classifier)
+V2_CLASSIFIER_HIDDEN_DIM = 64   # Classifier FC hidden dim
 
-# Loss weights — emphasize bbox regression (main generalization bottleneck)
-BBOX_WEIGHT = 3.0          # Bounding box regression
-OBJ_WEIGHT = 7.0           # Objectness — raised 5→7 to improve recall (V2 recall was 0.58)
-CLASS_WEIGHT = 0.5         # Image-level class (trivial on LLVIP)
+# Expand ratio sweet spot: 4 balances accuracy vs size
+# (3 = lean/V1, 6 = heavy/maximum capacity)
+V2_EXPAND_RATIO = 4
+
+# ============================================================================
+# TRAINING CONFIGURATION
+# ============================================================================
+BATCH_SIZE = 8
+LEARNING_RATE = 1e-3
+WEIGHT_DECAY = 5e-4
+EPOCHS = 50
+PATIENCE = 10
+NUM_WORKERS = 0
+
+# Loss weights
+BBOX_WEIGHT = 3.0
+OBJ_WEIGHT = 7.0
+CLASS_WEIGHT = 0.5
+
+# V2 auxiliary loss weights
+CONTRAST_WEIGHT = 0.1           # TFDet-style contrast loss (Phase 2+)
+GATE_REG_WEIGHT = 0.05          # EnergyGate entropy regularizer (Phase 3)
 
 # Learning rate schedule
 LR_SCHEDULER = 'cosine_warm_restarts'
-LR_T0 = 10                # Cosine restart period
-LR_T_MULT = 2             # Period multiplier
-LR_MIN = 1e-6             # Minimum learning rate
+LR_T0 = 10
+LR_T_MULT = 2
+LR_MIN = 1e-6
 
 # Data split
-VAL_RATIO = 0.2            # 20% validation split
-RANDOM_SEED = 42           # For reproducible splits
+VAL_RATIO = 0.2
+RANDOM_SEED = 42
 
 # ============================================================================
-# DEPLOYMENT CONSTRAINTS (ESP32-S3 with 8MB PSRAM)
+# V2 PHASE TRAINING CONFIGURATION
+# ============================================================================
+TRAINING_PHASES = {
+    1: {
+        'name': 'Human Shape Foundation (LLVIP)',
+        'datasets': {'llvip': 1.0},
+        'epochs': 50,
+        'lr': 1e-3,
+        'cmm_enabled': False,
+        'cmm_alpha': 0.0,
+        'contrast_loss': False,
+        'gate_regularizer': False,
+        'freeze_layers': [],
+        'batch_size': 32,
+    },
+    2: {
+        'name': 'Jungle Domain Transfer (ForestPersons + LLVIP)',
+        'datasets': {
+            'forestpersons': 0.40,     # CMM-RXTO (thermal zeroed)
+            'forestpersonsir': 0.40,   # CMM-ROTX (RGB zeroed)
+            'llvip': 0.20,            # Replay (prevents forgetting)
+        },
+        'epochs': 60,
+        'lr': 2e-4,
+        'cmm_enabled': True,
+        'cmm_alpha_start': 0.3,
+        'cmm_alpha_end': 0.5,
+        'contrast_loss': True,
+        'gate_regularizer': False,
+        'freeze_layers': [],
+        'batch_size': 32,
+    },
+    3: {
+        'name': 'Camouflage Fine-Tuning (Camo-M3FD + LLVIP)',
+        'datasets': {
+            'camod3fd': 0.70,
+            'llvip': 0.30,
+        },
+        'epochs': 35,
+        'lr': 5e-5,
+        'cmm_enabled': True,
+        'cmm_alpha': 0.5,
+        'contrast_loss': True,
+        'gate_regularizer': True,
+        'freeze_layers': ['rgb_stem', 'thm_stem', 'rgb_scale1', 'thm_scale1'],
+        'batch_size': 16,
+    },
+    4: {
+        'name': 'Full Mix Polish',
+        'datasets': {
+            'llvip': 0.20,
+            'forestpersons': 0.25,
+            'forestpersonsir': 0.25,
+            'camod3fd': 0.30,
+        },
+        'epochs': 25,
+        'lr': 1e-5,
+        'cmm_enabled': True,
+        'cmm_alpha': 0.5,
+        'contrast_loss': True,
+        'gate_regularizer': True,
+        'freeze_layers': [],
+        'batch_size': 32,
+    },
+}
+
+# ============================================================================
+# DEPLOYMENT CONSTRAINTS (ESP32-S3 with 8MB PSRAM) — optimize later
 # ============================================================================
 ESP32_S3 = {
     'sram_kb': 512,
-    'psram_mb': 8,                  # We have 8MB of PSRAM available
+    'psram_mb': 8,
     'flash_mb': 8,
     'clock_mhz': 240,
-    'max_model_flash_kb': 4000,     # 4 MB flash budget for FP16 weights
-    'max_arena_sram_kb': 4000,      # Arena can spill into PSRAM easily (4MB limit)
+    'max_model_flash_kb': 4000,
+    'max_arena_sram_kb': 4000,
     'target_fps': 10,
-    'target_model_fp16_kb': 2048,   # 2 MB hard limit for ESP32 flash
-    'target_model_int8_kb': 2048,   # INT8 weights budget (deploy target)
+    'target_model_fp16_kb': 2048,
+    'target_model_int8_kb': 2048,
 }
 
 # ============================================================================
@@ -226,7 +339,7 @@ ALERT_CONFIG = {
     'include_temperature': True,
     'include_timestamp': True,
     'include_intrusion_count': True,
-    'compact_format': True,         # Use compact binary for low-bandwidth TX
+    'compact_format': True,
 }
 
 # ============================================================================
@@ -235,7 +348,7 @@ ALERT_CONFIG = {
 MODEL_SAVE_DIR = 'checkpoints'
 BEST_MODEL_V1_PATH = os.path.join(MODEL_SAVE_DIR, 'best_microghost_thermal_v1.pth')
 BEST_MODEL_V2_PATH = os.path.join(MODEL_SAVE_DIR, 'best_microghost_thermal_v2.pth')
-BEST_MODEL_PATH = BEST_MODEL_V2_PATH # Default for training
+BEST_MODEL_PATH = BEST_MODEL_V2_PATH
 LAST_MODEL_PATH = os.path.join(MODEL_SAVE_DIR, 'last_microghost_thermal.pth')
 EXPORT_DIR = 'exports'
 ONNX_PATH = os.path.join(EXPORT_DIR, 'microghost_thermal.onnx')
@@ -247,25 +360,26 @@ LOG_DIR = 'logs'
 def print_config():
     """Print current configuration summary."""
     print("=" * 65)
-    print("  MicroGhost-Thermal Configuration")
+    print("  MicroGhost-Thermal Configuration (V2)")
     print("=" * 65)
     print(f"  Device:           {DEVICE}")
-    print(f"  Input:            {INPUT_SIZE}×{INPUT_SIZE}×{INPUT_CHANNELS} (thermal)")
+    print(f"  Input:            {INPUT_SIZE}×{INPUT_CHANNELS}")
     print(f"  Classes:          {NUM_CLASSES} → {list(CLASS_MAP.keys())}")
     print(f"  Anchors/cell:     {NUM_ANCHORS}")
     print(f"  Grids:            {SMALL_GRID_H}×{SMALL_GRID_W} (small), "
           f"{LARGE_GRID_H}×{LARGE_GRID_W} (large)")
-    print(f"  Backbone:         {STEM_CHANNELS}→{SCALE1_CHANNELS}→"
-          f"{SCALE2_CHANNELS}→{SCALE3_CHANNELS}")
-    print(f"  FPN channels:     {FPN_CHANNELS}")
+    print(f"  V2 Branch:        {V2_STEM_CHANNELS}→{V2_SCALE1_CHANNELS}→"
+          f"{V2_SCALE2_CHANNELS}→{V2_SCALE3_CHANNELS}")
+    print(f"  V2 BiFusion:      {V2_BIFUSION_CHANNELS}")
+    print(f"  V2 Expand Ratio:  {V2_EXPAND_RATIO}")
     print(f"  Batch size:       {BATCH_SIZE}")
     print(f"  Learning rate:    {LEARNING_RATE}")
     print(f"  Epochs:           {EPOCHS} (patience={PATIENCE})")
     print(f"  Active dataset:   {ACTIVE_DATASET}")
-    print(f"  Target:           ESP32-S3 ({ESP32_S3['sram_kb']}KB SRAM, "
-          f"{ESP32_S3['flash_mb']}MB Flash)")
-    print(f"  Target FP16:      <{ESP32_S3['target_model_fp16_kb']}KB")
-    print(f"  Target FPS:       ≥{ESP32_S3['target_fps']}")
+    print(f"  Log clamp:        [{LOG_CLAMP_MIN}, {LOG_CLAMP_MAX}]")
+    print(f"  NMS IoU:          {NMS_IOU_THRESHOLD}")
+    print(f"  Conf (inference): {CONFIDENCE_THRESHOLD}")
+    print(f"  Conf (eval):      {EVAL_CONFIDENCE_THRESHOLD}")
     print("=" * 65)
 
 
