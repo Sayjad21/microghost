@@ -37,13 +37,14 @@ def run_visual_diagnostics(dataset_name='llvip', dataset_root=None, output_dir='
             gt_pixels.append([gt['xmin'], gt['ymin'], gt['xmax'], gt['ymax']])
             
         # Decode Predictions (Inference engine returns normalized coords 0-1)
-        pred_pixels = []
         pred_confs = []
+        pred_gate_w = []
         for p in predictions:
             x1, y1, x2, y2 = p['bbox']
             # Scale back to original image dimensions for accurate IoU
             pred_pixels.append([x1 * w_orig, y1 * h_orig, x2 * w_orig, y2 * h_orig])
             pred_confs.append(p['combined_conf'])
+            pred_gate_w.append(p.get('gate_w', None))
 
         # 2. Categorize Errors via IoU Matching
         matched_gts = set()
@@ -73,7 +74,10 @@ def run_visual_diagnostics(dataset_name='llvip', dataset_root=None, output_dir='
         # 3. Save side-by-side snapshots for error patterns (e.g., mislocalizations or misses)
         has_error = (len(pred_pixels) != len(gt_pixels)) or (len(matched_gts) < len(gt_pixels))
         if has_error and idx < 50:  # Cap at 50 images to save disk space
-            save_diagnostic_plot(img_rgb, img_thermal, gt_boxes, pred_pixels, pred_confs, idx, output_dir)
+            gt_boxes_for_plot = []
+            for gt in annotations:
+                gt_boxes_for_plot.append([gt['xmin'], gt['ymin'], gt['xmax'], gt['ymax']])
+            save_diagnostic_plot(img_rgb, img_thermal, gt_boxes_for_plot, pred_pixels, pred_confs, pred_gate_w, idx, output_dir)
 
     print("\n" + "="*40 + "\n  DETAILED ERROR PATTERN SUMMARY\n" + "="*40)
     for k, v in stats.items():
@@ -82,7 +86,7 @@ def run_visual_diagnostics(dataset_name='llvip', dataset_root=None, output_dir='
     print(f"✅ Diagnostic snapshots saved to: ./{output_dir}/")
 
 
-def save_diagnostic_plot(rgb_img, thermal_img, gt_boxes, pred_boxes, confs, index, output_dir):
+def save_diagnostic_plot(rgb_img, thermal_img, gt_boxes, pred_boxes, confs, gate_ws, index, output_dir):
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     ((ax1, ax2), (ax3, ax4)) = axes
     
@@ -104,19 +108,23 @@ def save_diagnostic_plot(rgb_img, thermal_img, gt_boxes, pred_boxes, confs, inde
     # --- Bottom Row: Model Inference ---
     ax3.imshow(rgb_img)
     ax3.set_title("Model Inference (RGB)")
-    for box, conf in zip(pred_boxes, confs):
+    for box, conf, gw in zip(pred_boxes, confs, gate_ws):
         x1, y1, x2, y2 = box
         rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=False, edgecolor='magenta', linewidth=2)
         ax3.add_patch(rect)
-        ax3.text(x1, y1 - 4, f"{conf:.2f}", color='magenta', fontsize=9, weight='bold')
+        label = f"{conf:.2f}"
+        if gw: label += f" [R:{gw['rgb']:.2f}]"
+        ax3.text(x1, y1 - 4, label, color='magenta', fontsize=9, weight='bold')
 
     ax4.imshow(thermal_img, cmap='inferno')
     ax4.set_title("Model Inference (Thermal)")
-    for box, conf in zip(pred_boxes, confs):
+    for box, conf, gw in zip(pred_boxes, confs, gate_ws):
         x1, y1, x2, y2 = box
         rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=False, edgecolor='magenta', linewidth=2)
         ax4.add_patch(rect)
-        ax4.text(x1, y1 - 4, f"{conf:.2f}", color='magenta', fontsize=9, weight='bold')
+        label = f"{conf:.2f}"
+        if gw: label += f" [T:{gw['thm']:.2f}]"
+        ax4.text(x1, y1 - 4, label, color='magenta', fontsize=9, weight='bold')
         
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f"error_frame_{index:04d}.png"), dpi=150)
