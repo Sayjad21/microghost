@@ -144,7 +144,7 @@ def auto_download_huggingface(dataset_name, save_dir):
             repo_type="dataset",
             local_dir=save_dir,
             local_dir_use_symlinks=False,
-            # Adjust these depending on the actual repo structure
+            token=os.environ.get("HF_TOKEN"),
             ignore_patterns=["*.md", "*.git*"] 
         )
         print(f"[DOWNLOAD] Successfully downloaded {repo_id}")

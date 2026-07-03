@@ -38,9 +38,29 @@ In your first notebook cell, clone the `microghost` repository and install the r
 
 The V2 pipeline requires multiple datasets across its 4 phases. 
 
-### A. HuggingFace Datasets (Auto-Downloaded)
-The `ForestPersons` (RGB) and `ForestPersonsIR` (Thermal) datasets are automatically downloaded by the `huggingface_hub` integration built into the code. 
-- You **do not** need to manually download these. The code will download them to `data/forestpersons` and `data/forestpersonsir` during Phase 2.
+### A. HuggingFace Datasets (Gated Auto-Download)
+The `ForestPersons` (RGB) and `ForestPersonsIR` (Thermal) datasets are automatically downloaded via `huggingface_hub`. However, because they are **Gated Datasets**, you must provide a HuggingFace Access Token.
+
+**1. Accept the Dataset Terms:**
+Go to the HuggingFace dataset page (e.g., `etri-vilab/ForestPersons`) in your browser, log in, and click the button to accept the repository terms.
+
+**2. Set up your Kaggle Secret:**
+1. In Kaggle, click **Add-ons -> Secrets** in the top menu.
+2. Create a new secret with the Label: `HF_TOKEN`
+3. Paste your HuggingFace Access Token (Read) in the Value field.
+4. Check the box next to `HF_TOKEN` to attach it to your notebook.
+
+**3. Inject the Secret into the Environment:**
+Add this cell to your notebook *before* you run the training script:
+
+```python
+# Cell 2: Load HuggingFace Token
+from kaggle_secrets import UserSecretsClient
+import os
+
+user_secrets = UserSecretsClient()
+os.environ["HF_TOKEN"] = user_secrets.get_secret("HF_TOKEN")
+```
 
 ### B. Kaggle Datasets (LLVIP & Camo-M3FD)
 For **LLVIP** (Phase 1) and **Camo-M3FD** (Phase 3), it is highly recommended to use Kaggle Datasets to avoid downloading gigabytes of data every session.
