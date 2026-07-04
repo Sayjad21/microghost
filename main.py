@@ -135,8 +135,15 @@ def main():
         else:
             # =================================================================
             # V2 TRAINING PIPELINE (Multi-Phase)
-            # =================================================================
+            print("\n[V2] Pre-downloading HuggingFace datasets...")
+            from data_loading import auto_download_huggingface
+            from config import get_dataset_path
+            auto_download_huggingface('forestpersons', get_dataset_path('forestpersons'))
+            auto_download_huggingface('forestpersonsir', get_dataset_path('forestpersonsir'))
+
             if not args.no_kmeans:
+                print("\n[V2] Running K-Means clustering on Phase 1 Dataset (LLVIP) for optimal anchors...")
+                
                 # Use Phase 1 (LLVIP) for anchor sizing
                 phase1_train, _ = create_phase_dataloaders(1, preprocessor)
                 
