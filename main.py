@@ -142,18 +142,28 @@ def main():
             auto_download_huggingface('forestpersonsir', get_dataset_path('forestpersonsir'))
 
             if not args.no_kmeans:
-                print("\n[V2] Running K-Means clustering on Phase 1 Dataset (LLVIP) for optimal anchors...")
-                
-                # Use Phase 1 (LLVIP) for anchor sizing
-                phase1_train, _ = create_phase_dataloaders(1, preprocessor)
-                
-                # Combine datasets from phase 1 for anchor analysis
+                print("\n[V2] Running K-Means clustering on ALL datasets for universal anchors...")
+                from data_loading import LLVIPDataset, ForestPersonsDataset, ForestPersonsIRDataset, CAMOD3FDDataset
                 from torch.utils.data import ConcatDataset
                 
-                # We need raw datasets. Let's just use the default sizes if K-means is too complex
-                # to extract from ConcatDataset. Or we can just use the provided opt sizes.
-                # In V2, we rely on the DEFAULT_ANCHOR_SIZES in config, which we tuned to the combined set.
-                print("Skipping K-Means for V2 multi-phase (using config defaults).")
+                raw_train_datasets = []
+                for ds_name in ['llvip', 'forestpersons', 'forestpersonsir', 'camod3fd']:
+                    ds_path = get_dataset_path(ds_name)
+                    if os.path.exists(ds_path):
+                        try:
+                            if ds_name == 'llvip': raw_train_datasets.append(LLVIPDataset(ds_path, split='train', verbose=False))
+                            elif ds_name == 'forestpersons': raw_train_datasets.append(ForestPersonsDataset(ds_path, split='train', verbose=False))
+                            elif ds_name == 'forestpersonsir': raw_train_datasets.append(ForestPersonsIRDataset(ds_path, split='train', verbose=False))
+                            elif ds_name == 'camod3fd': raw_train_datasets.append(CAMOD3FDDataset(ds_path, split='train', verbose=False))
+                        except Exception as e:
+                            print(f"  Warning: failed to load {ds_name} for K-Means: {e}")
+                            
+                if raw_train_datasets:
+                    combined_raw = ConcatDataset(raw_train_datasets)
+                    opt_ratios, opt_sizes = analyze_dataset_anchors(combined_raw, num_anchors=3)
+                    preprocessor.encoder.update_anchors(opt_ratios, opt_sizes)
+                else:
+                    print("  No datasets found. Skipping K-Means.")
             
             model = MicroGhostV2(training_mode=True)
             print_model_analysis(model)
