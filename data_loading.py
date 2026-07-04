@@ -145,7 +145,7 @@ def auto_download_huggingface(dataset_name, save_dir):
             local_dir=save_dir,
             local_dir_use_symlinks=False,
             token=os.environ.get("HF_TOKEN"),
-            allow_patterns=["annotations.zip", "images/173*/*", "images/174*/*"], # Kaggle Subset
+            allow_patterns=["annotations.zip", "images/00*/*", "images/01*/*", "images/02*/*", "images/03*/*"], # Kaggle 8GB Subset (Sequences 001-039)
             ignore_patterns=["*.md", "*.git*"] 
         )
         print(f"[DOWNLOAD] Successfully downloaded {repo_id} (Subset only)")
