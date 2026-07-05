@@ -1,4 +1,5 @@
 LLVIP/
+CAMO-M3FD/
 .venv/
 __pycache__/
 *.pyc
@@ -9,3 +10,4 @@ thermal/
 runs/
 training_history.png
 confusion_matrix.png    
+outputnote.txt
