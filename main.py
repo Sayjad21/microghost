@@ -41,6 +41,7 @@ def parse_args():
     train_parser.add_argument('--resume-v1', action='store_true', help='Fine-tune from V1 checkpoint')
     train_parser.add_argument('--phase', type=int, default=None, choices=[1, 2, 3, 4],
                               help='Run a specific V2 training phase (1-4). If omitted, runs all phases.')
+    train_parser.add_argument('--debug', action='store_true', help='Run 1 toy epoch per phase for debugging')
 
     # Evaluate
     eval_parser = subparsers.add_parser('evaluate', help='Evaluate trained model')
@@ -85,6 +86,11 @@ def main():
     os.makedirs(LOG_DIR, exist_ok=True)
 
     if args.mode == 'train':
+        if args.debug:
+            import config
+            config.DEBUG_MODE = True
+            print("=> DEBUG MODE ENABLED: Running exactly 1 toy epoch per phase.")
+            
         print(f"Initializing training pipeline... (V2 mode: {not args.v1})")
         
         encoder = GridEncoder()
