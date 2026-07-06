@@ -41,6 +41,7 @@ def run_visual_diagnostics(dataset_name='llvip', dataset_root=None, output_dir='
             gt_pixels.append([gt['xmin'], gt['ymin'], gt['xmax'], gt['ymax']])
             
         # Decode Predictions (Inference engine returns normalized coords 0-1)
+        pred_pixels = []
         pred_confs = []
         pred_gate_w = []
         for p in predictions:

@@ -158,17 +158,17 @@ class ForestPersonsBaseDataset(Dataset):
         
         # Unify all json files
         all_coco_data = {'images': [], 'annotations': []}
-        for j_name in ['train.json', 'val.json', 'test.json']:
-            j_path = os.path.join(annot_dir, j_name)
-            if not os.path.exists(j_path):
-                j_path = os.path.join(root_dir, j_name) # Fallback to root_dir
-                
-            if os.path.exists(j_path):
-                with open(j_path, 'r') as f:
-                    data = json.load(f)
-                    all_coco_data['images'].extend(data.get('images', []))
-                    all_coco_data['annotations'].extend(data.get('annotations', []))
-                    
+        import glob
+        all_jsons = glob.glob(os.path.join(root_dir, '**', '*.json'), recursive=True)
+        for j_path in all_jsons:
+            if any(x in j_path for x in ['train.json', 'val.json', 'test.json']):
+                try:
+                    with open(j_path, 'r') as f:
+                        data = json.load(f)
+                        all_coco_data['images'].extend(data.get('images', []))
+                        all_coco_data['annotations'].extend(data.get('annotations', []))
+                except:
+                    pass
         img_id_to_path = {}
         for img in all_coco_data['images']:
             fname = img['file_name']

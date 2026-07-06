@@ -193,7 +193,11 @@ def main():
         print("\n[3/3] Exporting to ONNX...")
         from inference import load_inference_model
         final_model, _ = load_inference_model(BEST_MODEL_PATH)
-        export_to_onnx(final_model, ONNX_PATH)
+        try:
+            export_to_onnx(final_model, ONNX_PATH)
+        except Exception as e:
+            print(f"  [Warning] ONNX export failed (you may need to run '!pip install onnxscript'): {e}")
+            
         print("\nPlug-and-Play Suite Complete! All artifacts saved.")
 
 
