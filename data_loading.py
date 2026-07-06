@@ -160,6 +160,9 @@ class ForestPersonsBaseDataset(Dataset):
         all_coco_data = {'images': [], 'annotations': []}
         for j_name in ['train.json', 'val.json', 'test.json']:
             j_path = os.path.join(annot_dir, j_name)
+            if not os.path.exists(j_path):
+                j_path = os.path.join(root_dir, j_name) # Fallback to root_dir
+                
             if os.path.exists(j_path):
                 with open(j_path, 'r') as f:
                     data = json.load(f)
@@ -169,16 +172,21 @@ class ForestPersonsBaseDataset(Dataset):
         img_id_to_path = {}
         for img in all_coco_data['images']:
             fname = img['file_name']
-            full_path = os.path.join(root_dir, fname)
-            if not os.path.exists(full_path):
-                full_path = os.path.join(root_dir, 'images', split, os.path.basename(fname))
-            if not os.path.exists(full_path):
-                full_path = os.path.join(root_dir, split, 'images', os.path.basename(fname))
-            if not os.path.exists(full_path):
-                full_path = os.path.join(root_dir, 'images', os.path.basename(fname))
-                
-            if os.path.exists(full_path):
-                img_id_to_path[img['id']] = full_path
+            
+            # Exhaustive search for the image file
+            possible_paths = [
+                os.path.join(root_dir, fname),
+                os.path.join(root_dir, 'images', split, os.path.basename(fname)),
+                os.path.join(root_dir, split, 'images', os.path.basename(fname)),
+                os.path.join(root_dir, 'images', os.path.basename(fname)),
+                os.path.join(root_dir, split, os.path.basename(fname)),
+                os.path.join(root_dir, os.path.basename(fname))
+            ]
+            
+            for p in possible_paths:
+                if os.path.exists(p):
+                    img_id_to_path[img['id']] = p
+                    break
                 
         # Get list of valid image IDs and deterministic shuffle
         import random

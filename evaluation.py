@@ -216,7 +216,7 @@ def run_detection_evaluation(
         print(f"  NMS IoU:    {NMS_IOU_THRESHOLD}")
         print("=" * 70)
 
-    model = load_inference_model(model_path, device=device)
+    model, _ = load_inference_model(model_path, device=device)
     preprocessor = ThermalPreprocessor()
     val_dataset = get_val_base_dataset(dataset_name, dataset_root=dataset_root)
 
