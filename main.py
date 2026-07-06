@@ -136,8 +136,12 @@ def main():
                 model=model, train_loader=train_loader, val_loader=val_loader,
                 epochs=args.epochs, anchor_sizes=opt_sizes
             )
-            history = trainer.fit(save_path=BEST_MODEL_PATH)
-            plot_training_history(history, save_path='training_history_v1.png')
+            if getattr(__import__('config'), 'DEBUG_MODE', False):
+                print(f"\n[DEBUG] Skipping actual V1 training as requested.")
+                trainer._save_checkpoint(BEST_MODEL_PATH, 0, {'loss_total': 999.0})
+            else:
+                history = trainer.fit(save_path=BEST_MODEL_PATH)
+                plot_training_history(history, save_path='training_history_v1.png')
 
         else:
             # =================================================================
@@ -194,8 +198,13 @@ def main():
                 if args.epochs:
                     trainer.epochs = args.epochs
                     
-                history = trainer.fit(save_path=BEST_MODEL_PATH)
-                plot_training_history(history, save_path=f'training_history_v2_phase{phase}.png')
+                if getattr(__import__('config'), 'DEBUG_MODE', False):
+                    print(f"\n[DEBUG] Skipping actual training for Phase {phase} as requested.")
+                    trainer._save_checkpoint(BEST_MODEL_PATH, 0, {'loss_total': 999.0})
+                    break  # Stop after skipping the first phase setup in debug mode
+                else:
+                    history = trainer.fit(save_path=BEST_MODEL_PATH)
+                    plot_training_history(history, save_path=f'training_history_v2_phase{phase}.png')
 
             # =================================================================
             # POST-TRAINING PLUG-AND-PLAY SUITE
