@@ -624,9 +624,6 @@ class Trainer:
 
             self.train_metrics.update(predictions, targets, losses)
             pbar.set_postfix({'loss': f"{losses['total'].item():.3f}"})
-            
-            if DEBUG_MODE:
-                break
 
         return self.train_metrics.compute()
 
@@ -644,9 +641,6 @@ class Trainer:
             losses = self.criterion(predictions, targets)
             self.val_metrics.update(predictions, targets, losses)
             pbar.set_postfix({'loss': f"{losses['total'].item():.3f}"})
-            
-            if DEBUG_MODE:
-                break
 
         return self.val_metrics.compute()
 
@@ -856,9 +850,6 @@ class PhaseTrainer:
                 'loss': f"{losses['total'].item():.3f}",
                 'cmm': f"{cmm_alpha:.2f}",
             })
-            
-            if DEBUG_MODE:
-                break
 
         return self.train_metrics.compute()
 
@@ -876,9 +867,6 @@ class PhaseTrainer:
             predictions = self.model(images)
             losses = self.criterion(predictions, targets)
             self.val_metrics.update(predictions, targets, losses)
-            
-            if DEBUG_MODE:
-                break
 
         return self.val_metrics.compute()
 
