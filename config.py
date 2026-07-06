@@ -75,6 +75,14 @@ def get_dataset_path(dataset_name):
             if dataset_name == 'camod3fd' and ('m3fd' in lower_root or 'camo' in lower_root):
                 if 'train' in lower_dirs and 'val' in lower_dirs:
                     return root
+                    
+            if dataset_name == 'forestpersons' and 'forestpersons' in lower_root and 'ir' not in lower_root:
+                if 'images' in lower_dirs:
+                    return root
+                    
+            if dataset_name == 'forestpersonsir' and 'forestpersons' in lower_root and 'ir' in lower_root:
+                if 'images' in lower_dirs:
+                    return root
 
     return path
 
@@ -266,6 +274,9 @@ LR_MIN = 1e-6
 # Data split
 VAL_RATIO = 0.2
 RANDOM_SEED = 42
+
+# Debugging / Testing
+DEBUG_MODE = False  # Set to True to run only 1 batch per epoch and 1 epoch total for testing
 
 # ============================================================================
 # V2 PHASE TRAINING CONFIGURATION

@@ -31,7 +31,7 @@ from config import (
     LEARNING_RATE, WEIGHT_DECAY, EPOCHS, PATIENCE,
     LR_T0, LR_T_MULT, LR_MIN,
     MODEL_SAVE_DIR, BEST_MODEL_PATH, LAST_MODEL_PATH, LOG_DIR, DEVICE,
-    LOG_CLAMP_MIN, LOG_CLAMP_MAX, TRAINING_PHASES,
+    LOG_CLAMP_MIN, LOG_CLAMP_MAX, TRAINING_PHASES, DEBUG_MODE,
 )
 
 
@@ -624,6 +624,9 @@ class Trainer:
 
             self.train_metrics.update(predictions, targets, losses)
             pbar.set_postfix({'loss': f"{losses['total'].item():.3f}"})
+            
+            if DEBUG_MODE:
+                break
 
         return self.train_metrics.compute()
 
@@ -641,6 +644,9 @@ class Trainer:
             losses = self.criterion(predictions, targets)
             self.val_metrics.update(predictions, targets, losses)
             pbar.set_postfix({'loss': f"{losses['total'].item():.3f}"})
+            
+            if DEBUG_MODE:
+                break
 
         return self.val_metrics.compute()
 
@@ -657,7 +663,7 @@ class Trainer:
         print(f"  Validation:   {len(self.val_loader)} batches")
         print("=" * 70)
 
-        for epoch in range(self.epochs):
+        for epoch in range(1 if DEBUG_MODE else self.epochs):
             t0 = time.time()
             train_m = self.train_epoch()
             val_m = self.validate()
@@ -850,6 +856,9 @@ class PhaseTrainer:
                 'loss': f"{losses['total'].item():.3f}",
                 'cmm': f"{cmm_alpha:.2f}",
             })
+            
+            if DEBUG_MODE:
+                break
 
         return self.train_metrics.compute()
 
@@ -867,6 +876,9 @@ class PhaseTrainer:
             predictions = self.model(images)
             losses = self.criterion(predictions, targets)
             self.val_metrics.update(predictions, targets, losses)
+            
+            if DEBUG_MODE:
+                break
 
         return self.val_metrics.compute()
 
@@ -890,7 +902,7 @@ class PhaseTrainer:
         print(f"  Validation:   {len(self.val_loader)} batches")
         print("=" * 70)
 
-        for epoch in range(self.epochs):
+        for epoch in range(1 if DEBUG_MODE else self.epochs):
             t0 = time.time()
             train_m = self.train_epoch(epoch)
             val_m = self.validate()

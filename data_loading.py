@@ -126,33 +126,6 @@ class LLVIPDataset(Dataset):
 # FORESTPERSONS DATASET LOADERS (with Auto-Download)
 # ============================================================================
 
-def auto_download_huggingface(dataset_name, save_dir):
-    """Automatically download dataset from HuggingFace Hub if not present."""
-    if os.path.exists(save_dir) and len(os.listdir(save_dir)) > 0:
-        return  # Already downloaded
-        
-    repo_id = HUGGINGFACE_DATASETS.get(dataset_name)
-    if not repo_id:
-        return
-        
-    print(f"\n[DOWNLOAD] Auto-downloading {repo_id} to {save_dir}...")
-    try:
-        from huggingface_hub import snapshot_download
-        os.makedirs(save_dir, exist_ok=True)
-        snapshot_download(
-            repo_id=repo_id,
-            repo_type="dataset",
-            local_dir=save_dir,
-            local_dir_use_symlinks=False,
-            token=os.environ.get("HF_TOKEN"),
-            allow_patterns=["annotations.zip", "images/00*/*", "images/01*/*", "images/02*/*", "images/03*/*", "images/04*/*"], # Kaggle 12GB Subset (Sequences 001-049)
-            ignore_patterns=["*.md", "*.git*"] 
-        )
-        print(f"[DOWNLOAD] Successfully downloaded {repo_id} (Subset only)")
-    except ImportError:
-        print(f"  huggingface_hub not installed. Please pip install huggingface_hub")
-    except Exception as e:
-        print(f"  Failed to download {repo_id}: {e}")
 
 
 class ForestPersonsBaseDataset(Dataset):
@@ -171,8 +144,14 @@ class ForestPersonsBaseDataset(Dataset):
         zip_path = os.path.join(root_dir, 'annotations.zip')
         annot_dir = os.path.join(root_dir, 'annotations')
         if os.path.exists(zip_path) and not os.path.exists(annot_dir):
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(root_dir)
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(root_dir)
+            except PermissionError:
+                print(f"\n[ERROR] Cannot extract {zip_path} due to read-only permissions (Kaggle).")
+                print(f"Please extract annotations.zip LOCALLY before zipping and uploading your dataset to Kaggle!\n")
+            except Exception as e:
+                print(f"\n[ERROR] Failed to extract {zip_path}: {e}\n")
                 
         json_path = os.path.join(annot_dir, f"{split}.json")
         self.paired_paths = []
@@ -233,12 +212,12 @@ class ForestPersonsBaseDataset(Dataset):
 
 class ForestPersonsDataset(ForestPersonsBaseDataset):
     def __init__(self, root_dir, split='train', verbose=True):
-        auto_download_huggingface('forestpersons', root_dir)
+
         super().__init__(root_dir, split, modality='rgb', verbose=verbose)
 
 class ForestPersonsIRDataset(ForestPersonsBaseDataset):
     def __init__(self, root_dir, split='train', verbose=True):
-        auto_download_huggingface('forestpersonsir', root_dir)
+
         super().__init__(root_dir, split, modality='thermal', verbose=verbose)
 
 
