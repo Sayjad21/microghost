@@ -170,25 +170,16 @@ class ForestPersonsBaseDataset(Dataset):
                 except:
                     pass
         img_id_to_path = {}
+        
+        # Build image search map (find ALL images anywhere in root_dir)
+        import glob
+        all_imgs = glob.glob(os.path.join(root_dir, '**', '*.*'), recursive=True)
+        img_name_to_path = {os.path.basename(p): p for p in all_imgs if p.lower().endswith(('.jpg', '.png', '.jpeg'))}
         for img in all_coco_data['images']:
             fname = img['file_name']
-            
-            # Exhaustive search for the image file
-            possible_paths = [
-                os.path.join(root_dir, fname),
-                os.path.join(root_dir, 'images', split, os.path.basename(fname)),
-                os.path.join(root_dir, split, 'images', os.path.basename(fname)),
-                os.path.join(root_dir, 'images', os.path.basename(fname)),
-                os.path.join(root_dir, split, os.path.basename(fname)),
-                os.path.join(root_dir, os.path.basename(fname))
-            ]
-            
-            for p in possible_paths:
-                if os.path.exists(p):
-                    img_id_to_path[img['id']] = p
-                    break
-                
-        # Get list of valid image IDs and deterministic shuffle
+            basename = os.path.basename(fname)
+            if basename in img_name_to_path:
+                img_id_to_path[img['id']] = img_name_to_path[basename]
         import random
         valid_img_ids = sorted(list(img_id_to_path.keys()))
         random.Random(42).shuffle(valid_img_ids)

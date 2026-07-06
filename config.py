@@ -45,6 +45,7 @@ HUGGINGFACE_DATASETS = {
 
 
 def get_dataset_path(dataset_name):
+    print(f'[DEBUG] Resolving path for {dataset_name}...')
     """Resolve dataset root path (env override or default under DATASET_ROOT)."""
     env_key = f'MICROGHOST_{dataset_name.upper()}_PATH'
     if env_key in os.environ:
@@ -52,6 +53,7 @@ def get_dataset_path(dataset_name):
     subdir = DATASET_SUBDIRS.get(dataset_name, dataset_name)
     path = os.path.join(DATASET_ROOT, subdir)
     if os.path.isdir(path):
+    print(f'[DEBUG] Fallback path for {dataset_name}: {path}')
         return path
     alt = os.path.join(_PROJECT_DIR, subdir.upper() if dataset_name == 'llvip' else subdir)
     if os.path.isdir(alt):
@@ -61,29 +63,30 @@ def get_dataset_path(dataset_name):
     kaggle_input = '/kaggle/input'
     if os.path.exists(kaggle_input):
         for root, dirs, _ in os.walk(kaggle_input):
-            # Limit search depth to avoid hanging (Kaggle paths can be deep)
-            if root.count(os.sep) - kaggle_input.count(os.sep) > 6:
-                continue
-                
+            if root.count(os.sep) - kaggle_input.count(os.sep) > 6: continue
+            
             lower_root = root.lower()
             lower_dirs = [d.lower() for d in dirs]
             
             if dataset_name == 'llvip' and 'llvip' in lower_root:
-                if 'infrared' in lower_dirs and 'annotations' in lower_dirs:
+                if 'infrared' in lower_dirs or 'visible' in lower_dirs:
+                    print(f'[DEBUG] Found {dataset_name} at {root}')
                     return root
                     
             if dataset_name == 'camod3fd' and ('m3fd' in lower_root or 'camo' in lower_root):
-                if 'train' in lower_dirs and 'val' in lower_dirs:
+                if 'train' in lower_dirs or 'images' in lower_dirs:
+                    print(f'[DEBUG] Found {dataset_name} at {root}')
                     return root
                     
-            if dataset_name == 'forestpersons' and 'forestpersons' in lower_root and 'ir' not in lower_root:
-                if 'images' in lower_dirs:
+            if dataset_name == 'forestpersons' and 'forest' in lower_root and 'ir' not in lower_root.split('_')[-1] and 'ir' not in lower_root.split('/')[-1]:
+                if 'images' in lower_dirs or 'annotations' in lower_dirs or 'train.json' in os.listdir(root):
+                    print(f'[DEBUG] Found {dataset_name} at {root}')
                     return root
                     
-            if dataset_name == 'forestpersonsir' and 'forestpersons' in lower_root and 'ir' in lower_root:
-                if 'images' in lower_dirs:
+            if dataset_name == 'forestpersonsir' and 'forest' in lower_root and ('ir' in lower_root.split('_')[-1] or 'ir' in lower_root.split('/')[-1]):
+                if 'images' in lower_dirs or 'annotations' in lower_dirs or 'train.json' in os.listdir(root):
+                    print(f'[DEBUG] Found {dataset_name} at {root}')
                     return root
-
     return path
 
 # Supported dataset configurations
