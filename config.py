@@ -53,7 +53,7 @@ def get_dataset_path(dataset_name):
     subdir = DATASET_SUBDIRS.get(dataset_name, dataset_name)
     path = os.path.join(DATASET_ROOT, subdir)
     if os.path.isdir(path):
-    print(f'[DEBUG] Fallback path for {dataset_name}: {path}')
+        print(f'[DEBUG] Fallback path for {dataset_name}: {path}')
         return path
     alt = os.path.join(_PROJECT_DIR, subdir.upper() if dataset_name == 'llvip' else subdir)
     if os.path.isdir(alt):
