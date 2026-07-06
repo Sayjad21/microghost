@@ -210,10 +210,12 @@ def main():
             print("\n[2/3] Generating Visual Diagnostics...")
             try:
                 from diagnose import run_visual_diagnostics
-                run_visual_diagnostics(
-                    dataset_name=args.dataset, 
-                    dataset_root=dataset_root
-                )
+                for dset in ['llvip', 'camod3fd', 'forestpersons']:
+                    print(f"  -> Diagnosing {dset}...")
+                    run_visual_diagnostics(
+                        dataset_name=dset, 
+                        dataset_root=get_dataset_path(dset)
+                    )
             except Exception as e:
                 print(f"Diagnostics skipped or failed: {e}")
 
