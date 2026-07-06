@@ -38,29 +38,17 @@ In your first notebook cell, clone the `microghost` repository and install the r
 
 The V2 pipeline requires multiple datasets across its 4 phases. 
 
-### A. HuggingFace Datasets (Gated Auto-Download)
-The `ForestPersons` (RGB) and `ForestPersonsIR` (Thermal) datasets are automatically downloaded via `huggingface_hub`. However, because they are **Gated Datasets**, you must provide a HuggingFace Access Token.
+### A. HuggingFace Datasets (ForestPersons & ForestPersonsIR)
+**CRITICAL:** Do NOT attempt to auto-download these directly into the Kaggle notebook using the HuggingFace CLI. These datasets contain nearly 100,000 tiny image files. Writing that many small files directly to `/kaggle/working/` will trigger a severe Kaggle Disk I/O bottleneck, stalling the notebook for hours.
 
-**1. Accept the Dataset Terms:**
-Go to the HuggingFace dataset page (e.g., `etri-vilab/ForestPersons`) in your browser, log in, and click the button to accept the repository terms.
+Instead, follow this workflow to mount them as read-only, high-speed Kaggle Datasets:
 
-**2. Set up your Kaggle Secret:**
-1. In Kaggle, click **Add-ons -> Secrets** in the top menu.
-2. Create a new secret with the Label: `HF_TOKEN`
-3. Paste your HuggingFace Access Token (Read) in the Value field.
-4. Check the box next to `HF_TOKEN` to attach it to your notebook.
+1. **Download Locally**: Use the provided `download_subset.py` script on your local PC to download exactly 5,000 images from both `ForestPersons` and `ForestPersonsIR`. (Ensure your `HF_TOKEN` is set).
+2. **Extract Annotations**: On your PC, extract the `annotations.zip` inside each folder so that the `annotations` folder sits next to the `images` folder. Delete the `.zip` file afterwards.
+3. **Zip and Upload**: Zip the main `ForestPersons` and `ForestPersonsIR` folders, and upload them to Kaggle as a **New Dataset** via the Kaggle web UI.
+4. **Attach to Notebook**: In your Kaggle notebook, click **Add Data** -> **Your Work**, and attach the two datasets you just created.
 
-**3. Inject the Secret into the Environment:**
-Add this cell to your notebook *before* you run the training script:
-
-```python
-# Cell 2: Load HuggingFace Token
-from kaggle_secrets import UserSecretsClient
-import os
-
-user_secrets = UserSecretsClient()
-os.environ["HF_TOKEN"] = user_secrets.get_secret("HF_TOKEN")
-```
+*Because of our updated `config.py`, the pipeline will automatically discover these datasets in `/kaggle/input/` and load them at maximum speed!*
 
 ### B. Kaggle Datasets (LLVIP & Camo-M3FD)
 For **LLVIP** (Phase 1) and **Camo-M3FD** (Phase 3), it is highly recommended to use Kaggle Datasets to avoid downloading gigabytes of data every session.
@@ -83,10 +71,28 @@ You can completely skip the `!ln -s` commands in Cell 2.
 
 ## 4. Running the V2 Multi-Phase Training
 
-Now you can start the 4-Phase V2 curriculum. The script will automatically handle anchor optimization, phase switching, dataset concatenation, and CMM single-modality generation.
+### Pipeline Dry Run (Testing)
+Before launching a multi-hour training session, it is highly recommended to run a quick test to verify all dataset paths and shapes are correct.
+Place this in your notebook to run a single batch/single epoch test:
+
+```python
+# 1. Clear out the persistent storage from previous failed attempts
+!rm -rf /kaggle/working/*
+
+import sys
+sys.path.append('/kaggle/working/microghost')
+import config
+
+# TURN THIS ON TO TEST 1 BATCH / 1 EPOCH
+config.DEBUG_MODE = True
+print(f"DEBUG_MODE is set to: {config.DEBUG_MODE}")
+```
+
+### Full Training
+Once the debug run succeeds, set `config.DEBUG_MODE = False` (or remove the line entirely) and execute the actual training script. The script will automatically handle anchor optimization, phase switching, dataset concatenation, and CMM single-modality generation.
 
 ```bash
-# Cell 3: Start V2 Training
+# Start V2 Training
 !python main.py train --batch-size 16 --num-workers 2
 ```
 
