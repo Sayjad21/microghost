@@ -425,7 +425,7 @@ def analyze_dataset_anchors(dataset, num_anchors=NUM_ANCHORS):
     all_ratios = []
     all_sizes = []
 
-    print(f"\nAnalyzing {len(dataset)} samples for anchor optimization...")
+    print(f"\nAnalyzing dataset (Total Size: {len(dataset)} samples). Sub-sampling for speed...")
 
     if hasattr(dataset, 'iter_annotations'):
         sample_iter = dataset.iter_annotations()
