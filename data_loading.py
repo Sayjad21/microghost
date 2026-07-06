@@ -153,37 +153,57 @@ class ForestPersonsBaseDataset(Dataset):
             except Exception as e:
                 print(f"\n[ERROR] Failed to extract {zip_path}: {e}\n")
                 
-        json_path = os.path.join(annot_dir, f"{split}.json")
         self.paired_paths = []
         self.annotations_map = defaultdict(list)
         
-        if os.path.exists(json_path):
-            with open(json_path, 'r') as f:
-                coco_data = json.load(f)
+        # Unify all json files
+        all_coco_data = {'images': [], 'annotations': []}
+        for j_name in ['train.json', 'val.json', 'test.json']:
+            j_path = os.path.join(annot_dir, j_name)
+            if os.path.exists(j_path):
+                with open(j_path, 'r') as f:
+                    data = json.load(f)
+                    all_coco_data['images'].extend(data.get('images', []))
+                    all_coco_data['annotations'].extend(data.get('annotations', []))
+                    
+        img_id_to_path = {}
+        for img in all_coco_data['images']:
+            fname = img['file_name']
+            full_path = os.path.join(root_dir, fname)
+            if not os.path.exists(full_path):
+                full_path = os.path.join(root_dir, 'images', split, os.path.basename(fname))
+            if not os.path.exists(full_path):
+                full_path = os.path.join(root_dir, split, 'images', os.path.basename(fname))
+            if not os.path.exists(full_path):
+                full_path = os.path.join(root_dir, 'images', os.path.basename(fname))
                 
-            img_id_to_path = {}
-            for img in coco_data.get('images', []):
-                fname = img['file_name']
-                full_path = os.path.join(root_dir, fname)
-                if not os.path.exists(full_path):
-                    full_path = os.path.join(root_dir, 'images', split, os.path.basename(fname))
-                if not os.path.exists(full_path):
-                    full_path = os.path.join(root_dir, split, 'images', os.path.basename(fname))
+            if os.path.exists(full_path):
                 img_id_to_path[img['id']] = full_path
                 
-            for ann in coco_data.get('annotations', []):
-                img_id = ann['image_id']
-                if img_id in img_id_to_path:
-                    x, y, w, h = ann['bbox']
-                    self.annotations_map[img_id].append({
-                        'class_id': map_person_class_id(),
-                        'xmin': max(0, int(x)), 'ymin': max(0, int(y)),
-                        'xmax': int(x + w), 'ymax': int(y + h)
-                    })
-                    
-            for img_id, path in img_id_to_path.items():
-                if os.path.exists(path):
-                    self.paired_paths.append((path, img_id))
+        # Get list of valid image IDs and deterministic shuffle
+        import random
+        valid_img_ids = sorted(list(img_id_to_path.keys()))
+        random.Random(42).shuffle(valid_img_ids)
+        
+        # 80/20 split based on the requested split
+        split_idx = int(len(valid_img_ids) * 0.8)
+        if split == 'train':
+            assigned_img_ids = set(valid_img_ids[:split_idx])
+        else:  # val
+            assigned_img_ids = set(valid_img_ids[split_idx:])
+            
+        for ann in all_coco_data['annotations']:
+            img_id = ann['image_id']
+            if img_id in assigned_img_ids:
+                x, y, w, h = ann['bbox']
+                self.annotations_map[img_id].append({
+                    'class_id': map_person_class_id(),
+                    'xmin': max(0, int(x)), 'ymin': max(0, int(y)),
+                    'xmax': int(x + w), 'ymax': int(y + h)
+                })
+                
+        for img_id in assigned_img_ids:
+            self.paired_paths.append((img_id_to_path[img_id], img_id))
                     
         if verbose:
             print(f" ForestPersons ({modality}) [{split}]: {len(self.paired_paths)} single-modality samples")

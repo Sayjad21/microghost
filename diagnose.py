@@ -11,7 +11,7 @@ from config import BEST_MODEL_PATH, INPUT_WIDTH, INPUT_HEIGHT
 from data_loading import get_val_base_dataset
 from inference import ThermalInferenceEngine, calculate_iou_numpy
 
-def run_visual_diagnostics(dataset_name='llvip', dataset_root=None, output_dir='diagnostic_results', iou_thresh=0.5):
+def run_visual_diagnostics(dataset_name='llvip', dataset_root=None, output_dir='diagnostic_results', iou_thresh=0.5, limit=None):
     os.makedirs(output_dir, exist_ok=True)
     
     # 1. Initialize Engine and Raw Validation Split
@@ -22,8 +22,12 @@ def run_visual_diagnostics(dataset_name='llvip', dataset_root=None, output_dir='
     # Error pattern counters
     stats = {'pure_false_positives': 0, 'missed_targets': 0, 'mislocalized': 0, 'correct': 0}
     
-    print(f"Investigating {len(val_dataset)} validation frames...")
-    for idx in tqdm(range(len(val_dataset)), desc="Diagnosing"):
+    num_samples = len(val_dataset)
+    if limit is not None:
+        num_samples = min(num_samples, limit)
+        
+    print(f"Investigating {num_samples} validation frames...")
+    for idx in tqdm(range(num_samples), desc="Diagnosing"):
         # Fetch raw image entry
         (img_rgb, img_thermal), annotations, (h_orig, w_orig) = val_dataset[idx]
         

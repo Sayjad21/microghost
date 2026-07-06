@@ -29,7 +29,6 @@ def parse_args():
 
     # Train
     train_parser = subparsers.add_parser('train', help='Train the model')
-    train_parser.add_argument('--v1', action='store_true', help='Train legacy V1 model (single phase)')
     train_parser.add_argument('--dataset', type=str, default=ACTIVE_DATASET,
                               choices=['llvip', 'kaist', 'flirv2', 'camod3fd'], help='Dataset for V1 training')
     train_parser.add_argument('--data-root', type=str, default=None,
@@ -38,7 +37,6 @@ def parse_args():
     train_parser.add_argument('--batch-size', type=int, default=None, help='Override config batch size')
     train_parser.add_argument('--num-workers', type=int, default=0, help='Override config num workers (CPU scaling)')
     train_parser.add_argument('--no-kmeans', action='store_true', help='Skip K-Means anchor optimization')
-    train_parser.add_argument('--resume-v1', action='store_true', help='Fine-tune from V1 checkpoint')
     train_parser.add_argument('--phase', type=int, default=None, choices=[1, 2, 3, 4],
                               help='Run a specific V2 training phase (1-4). If omitted, runs all phases.')
     train_parser.add_argument('--debug', action='store_true', help='Run 1 toy epoch per phase for debugging')
@@ -92,155 +90,111 @@ def main():
             args.no_kmeans = True
             print("=> DEBUG MODE ENABLED: Running exactly 1 toy epoch per phase (1 batch only) and skipping K-Means.")
             
-        print(f"Initializing training pipeline... (V2 mode: {not args.v1})")
+        print(f"Initializing training pipeline... (V2 mode: True)")
         
         encoder = GridEncoder()
         preprocessor = ThermalPreprocessor(encoder=encoder)
         opt_sizes = None
 
-        if args.v1:
-            # =================================================================
-            # V1 TRAINING PIPELINE (Legacy Single Phase)
-            # =================================================================
-            dataset_root = args.data_root or get_dataset_path(args.dataset)
-            print(f"Dataset path: {dataset_root}")
+        # =================================================================
+        # V2 TRAINING PIPELINE (Multi-Phase)
 
-            train_loader, val_loader = create_dataloaders(
-                dataset_name=args.dataset, preprocessor=preprocessor,
-                dataset_root=dataset_root, batch_size=args.batch_size,
-                num_workers=args.num_workers
+        if not args.no_kmeans:
+            print("\n[V2] Running K-Means clustering on ALL datasets for universal anchors...")
+            from data_loading import LLVIPDataset, ForestPersonsDataset, ForestPersonsIRDataset, CAMOD3FDDataset
+            from torch.utils.data import ConcatDataset
+            
+            raw_train_datasets = []
+            for ds_name in ['llvip', 'forestpersons', 'forestpersonsir', 'camod3fd']:
+                ds_path = get_dataset_path(ds_name)
+                if os.path.exists(ds_path):
+                    try:
+                        if ds_name == 'llvip': raw_train_datasets.append(LLVIPDataset(ds_path, split='train', verbose=False))
+                        elif ds_name == 'forestpersons': raw_train_datasets.append(ForestPersonsDataset(ds_path, split='train', verbose=False))
+                        elif ds_name == 'forestpersonsir': raw_train_datasets.append(ForestPersonsIRDataset(ds_path, split='train', verbose=False))
+                        elif ds_name == 'camod3fd': raw_train_datasets.append(CAMOD3FDDataset(ds_path, split='train', verbose=False))
+                    except Exception as e:
+                        print(f"  Warning: failed to load {ds_name} for K-Means: {e}")
+                        
+            if raw_train_datasets:
+                combined_raw = ConcatDataset(raw_train_datasets)
+                opt_ratios, opt_sizes = analyze_dataset_anchors(combined_raw, num_anchors=3)
+                preprocessor.encoder.update_anchors(opt_ratios, opt_sizes)
+            else:
+                print("  No datasets found. Skipping K-Means.")
+        
+        model = MicroGhostV2(training_mode=True)
+        print_model_analysis(model)
+        benchmark_model(model)
+
+        phases_to_run = [args.phase] if args.phase else [1, 2, 3, 4]
+
+        # If starting from a later phase, attempt to load previous best model
+        if phases_to_run[0] > 1 and os.path.exists(BEST_MODEL_PATH):
+            print(f"Loading previous weights from {BEST_MODEL_PATH} before starting Phase {phases_to_run[0]}")
+            ckpt = torch.load(BEST_MODEL_PATH, map_location='cpu')
+            model.load_state_dict(ckpt['model_state_dict'])
+        
+        for phase in phases_to_run:
+            train_loader, val_loader = create_phase_dataloaders(
+                phase=phase, preprocessor=preprocessor,
+                batch_size=args.batch_size, num_workers=args.num_workers
             )
-
-            if not args.no_kmeans:
-                opt_ratios, opt_sizes = analyze_dataset_anchors(
-                    train_loader.dataset.base_dataset, num_anchors=NUM_ANCHORS)
-                encoder.update_anchors(opt_ratios, opt_sizes)
-                train_loader, val_loader = create_dataloaders(
-                    dataset_name=args.dataset, dataset_root=dataset_root,
-                    preprocessor=preprocessor, batch_size=args.batch_size,
-                    num_workers=args.num_workers
-                )
-
-            model = MicroGhostThermal()
-            if args.resume_v1:
-                from config import BEST_MODEL_V1_PATH
-                if os.path.exists(BEST_MODEL_V1_PATH):
-                    ckpt = torch.load(BEST_MODEL_V1_PATH, map_location='cpu')
-                    model.load_state_dict(ckpt['model_state_dict'], strict=False)
-                    print(f"  Fine-tuning from V1: {BEST_MODEL_V1_PATH}")
-
-            print_model_analysis(model)
-            benchmark_model(model)
-
-            trainer = Trainer(
+            
+            trainer = PhaseTrainer(
                 model=model, train_loader=train_loader, val_loader=val_loader,
-                epochs=args.epochs, anchor_sizes=opt_sizes
+                phase=phase, anchor_sizes=opt_sizes
             )
+            
+            # Use fewer epochs if --epochs is specified (for quick testing)
+            if args.epochs:
+                trainer.epochs = args.epochs
+                
             if getattr(__import__('config'), 'DEBUG_MODE', False):
-                print(f"\n[DEBUG] Skipping actual V1 training as requested.")
+                print(f"\n[DEBUG] Skipping actual training for Phase {phase} as requested.")
+                # Save dummy checkpoint so evaluation doesn't fail
                 trainer._save_checkpoint(BEST_MODEL_PATH, 0, {'loss_total': 999.0})
             else:
                 history = trainer.fit(save_path=BEST_MODEL_PATH)
-                plot_training_history(history, save_path='training_history_v1.png')
+                plot_training_history(history, save_path=f'training_history_v2_phase{phase}.png')
 
-        else:
-            # =================================================================
-            # V2 TRAINING PIPELINE (Multi-Phase)
+        # =================================================================
+        # POST-TRAINING PLUG-AND-PLAY SUITE
+        # =================================================================
+        print("\n" + "="*60)
+        print("  STARTING AUTOMATED POST-TRAINING SUITE")
+        print("="*60)
+        
+        # 1. Evaluate
+        print("\n[1/3] Running Full Validation Evaluation...")
+        dataset_root = args.data_root or get_dataset_path(args.dataset)
+        run_detection_evaluation(
+            model_path=BEST_MODEL_PATH,
+            dataset_name=args.dataset,
+            dataset_root=dataset_root,
+            limit=10 if getattr(__import__('config'), 'DEBUG_MODE', False) else None
+        )
 
-            if not args.no_kmeans:
-                print("\n[V2] Running K-Means clustering on ALL datasets for universal anchors...")
-                from data_loading import LLVIPDataset, ForestPersonsDataset, ForestPersonsIRDataset, CAMOD3FDDataset
-                from torch.utils.data import ConcatDataset
-                
-                raw_train_datasets = []
-                for ds_name in ['llvip', 'forestpersons', 'forestpersonsir', 'camod3fd']:
-                    ds_path = get_dataset_path(ds_name)
-                    if os.path.exists(ds_path):
-                        try:
-                            if ds_name == 'llvip': raw_train_datasets.append(LLVIPDataset(ds_path, split='train', verbose=False))
-                            elif ds_name == 'forestpersons': raw_train_datasets.append(ForestPersonsDataset(ds_path, split='train', verbose=False))
-                            elif ds_name == 'forestpersonsir': raw_train_datasets.append(ForestPersonsIRDataset(ds_path, split='train', verbose=False))
-                            elif ds_name == 'camod3fd': raw_train_datasets.append(CAMOD3FDDataset(ds_path, split='train', verbose=False))
-                        except Exception as e:
-                            print(f"  Warning: failed to load {ds_name} for K-Means: {e}")
-                            
-                if raw_train_datasets:
-                    combined_raw = ConcatDataset(raw_train_datasets)
-                    opt_ratios, opt_sizes = analyze_dataset_anchors(combined_raw, num_anchors=3)
-                    preprocessor.encoder.update_anchors(opt_ratios, opt_sizes)
-                else:
-                    print("  No datasets found. Skipping K-Means.")
-            
-            model = MicroGhostV2(training_mode=True)
-            print_model_analysis(model)
-            benchmark_model(model)
-
-            phases_to_run = [args.phase] if args.phase else [1, 2, 3, 4]
-
-            # If starting from a later phase, attempt to load previous best model
-            if phases_to_run[0] > 1 and os.path.exists(BEST_MODEL_PATH):
-                print(f"Loading previous weights from {BEST_MODEL_PATH} before starting Phase {phases_to_run[0]}")
-                ckpt = torch.load(BEST_MODEL_PATH, map_location='cpu')
-                model.load_state_dict(ckpt['model_state_dict'])
-            
-            for phase in phases_to_run:
-                train_loader, val_loader = create_phase_dataloaders(
-                    phase=phase, preprocessor=preprocessor,
-                    batch_size=args.batch_size, num_workers=args.num_workers
+        # 2. Diagnose
+        print("\n[2/3] Generating Visual Diagnostics...")
+        try:
+            from diagnose import run_visual_diagnostics
+            for dset in ['llvip', 'camod3fd', 'forestpersons', 'forestpersonsir']:
+                print(f"  -> Diagnosing {dset}...")
+                run_visual_diagnostics(
+                    dataset_name=dset, 
+                    dataset_root=get_dataset_path(dset),
+                    limit=10 if getattr(__import__('config'), 'DEBUG_MODE', False) else None
                 )
-                
-                trainer = PhaseTrainer(
-                    model=model, train_loader=train_loader, val_loader=val_loader,
-                    phase=phase, anchor_sizes=opt_sizes
-                )
-                
-                # Use fewer epochs if --epochs is specified (for quick testing)
-                if args.epochs:
-                    trainer.epochs = args.epochs
-                    
-                if getattr(__import__('config'), 'DEBUG_MODE', False):
-                    print(f"\n[DEBUG] Skipping actual training for Phase {phase} as requested.")
-                    trainer._save_checkpoint(BEST_MODEL_PATH, 0, {'loss_total': 999.0})
-                    break  # Stop after skipping the first phase setup in debug mode
-                else:
-                    history = trainer.fit(save_path=BEST_MODEL_PATH)
-                    plot_training_history(history, save_path=f'training_history_v2_phase{phase}.png')
+        except Exception as e:
+            print(f"Diagnostics skipped or failed: {e}")
 
-            # =================================================================
-            # POST-TRAINING PLUG-AND-PLAY SUITE
-            # =================================================================
-            print("\n" + "="*60)
-            print("  STARTING AUTOMATED POST-TRAINING SUITE")
-            print("="*60)
-            
-            # 1. Evaluate
-            print("\n[1/3] Running Full Validation Evaluation...")
-            dataset_root = args.data_root or get_dataset_path(args.dataset)
-            run_detection_evaluation(
-                model_path=BEST_MODEL_PATH,
-                dataset_name=args.dataset,
-                dataset_root=dataset_root
-            )
-
-            # 2. Diagnose
-            print("\n[2/3] Generating Visual Diagnostics...")
-            try:
-                from diagnose import run_visual_diagnostics
-                for dset in ['llvip', 'camod3fd', 'forestpersons']:
-                    print(f"  -> Diagnosing {dset}...")
-                    run_visual_diagnostics(
-                        dataset_name=dset, 
-                        dataset_root=get_dataset_path(dset)
-                    )
-            except Exception as e:
-                print(f"Diagnostics skipped or failed: {e}")
-
-            # 3. Export
-            print("\n[3/3] Exporting to ONNX...")
-            from inference import load_inference_model
-            final_model, _ = load_inference_model(BEST_MODEL_PATH)
-            export_to_onnx(final_model, ONNX_PATH)
-            print("\nPlug-and-Play Suite Complete! All artifacts saved.")
+        # 3. Export
+        print("\n[3/3] Exporting to ONNX...")
+        from inference import load_inference_model
+        final_model, _ = load_inference_model(BEST_MODEL_PATH)
+        export_to_onnx(final_model, ONNX_PATH)
+        print("\nPlug-and-Play Suite Complete! All artifacts saved.")
 
 
     elif args.mode == 'benchmark':
