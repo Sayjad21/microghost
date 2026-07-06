@@ -89,7 +89,8 @@ def main():
         if args.debug:
             import config
             config.DEBUG_MODE = True
-            print("=> DEBUG MODE ENABLED: Running exactly 1 toy epoch per phase.")
+            args.no_kmeans = True
+            print("=> DEBUG MODE ENABLED: Running exactly 1 toy epoch per phase (1 batch only) and skipping K-Means.")
             
         print(f"Initializing training pipeline... (V2 mode: {not args.v1})")
         

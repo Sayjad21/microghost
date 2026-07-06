@@ -610,7 +610,7 @@ class Trainer:
         self.train_metrics.reset()
 
         pbar = tqdm(self.train_loader, desc='  Training', leave=False)
-        for images, targets in pbar:
+        for batch_idx, (images, targets) in enumerate(pbar):
             images = images.to(self.device)
             targets = {k: v.to(self.device) for k, v in targets.items()}
 
@@ -625,6 +625,9 @@ class Trainer:
             self.train_metrics.update(predictions, targets, losses)
             pbar.set_postfix({'loss': f"{losses['total'].item():.3f}"})
 
+            if getattr(__import__('config'), 'DEBUG_MODE', False) and batch_idx > 0:
+                break
+
         return self.train_metrics.compute()
 
     @torch.no_grad()
@@ -633,7 +636,7 @@ class Trainer:
         self.val_metrics.reset()
 
         pbar = tqdm(self.val_loader, desc='  Validation', leave=False)
-        for images, targets in pbar:
+        for batch_idx, (images, targets) in enumerate(pbar):
             images = images.to(self.device)
             targets = {k: v.to(self.device) for k, v in targets.items()}
 
@@ -641,6 +644,9 @@ class Trainer:
             losses = self.criterion(predictions, targets)
             self.val_metrics.update(predictions, targets, losses)
             pbar.set_postfix({'loss': f"{losses['total'].item():.3f}"})
+
+            if getattr(__import__('config'), 'DEBUG_MODE', False) and batch_idx > 0:
+                break
 
         return self.val_metrics.compute()
 
@@ -657,7 +663,7 @@ class Trainer:
         print(f"  Validation:   {len(self.val_loader)} batches")
         print("=" * 70)
 
-        for epoch in range(1 if DEBUG_MODE else self.epochs):
+        for epoch in range(1 if getattr(__import__('config'), 'DEBUG_MODE', False) else self.epochs):
             t0 = time.time()
             train_m = self.train_epoch()
             val_m = self.validate()
@@ -833,7 +839,7 @@ class PhaseTrainer:
 
         pbar = tqdm(self.train_loader,
                     desc=f'  Phase {self.phase} Training', leave=False)
-        for images, targets in pbar:
+        for batch_idx, (images, targets) in enumerate(pbar):
             images = images.to(self.device)
             targets = {k: v.to(self.device) for k, v in targets.items()}
 
@@ -851,6 +857,9 @@ class PhaseTrainer:
                 'cmm': f"{cmm_alpha:.2f}",
             })
 
+            if getattr(__import__('config'), 'DEBUG_MODE', False) and batch_idx > 0:
+                break
+
         return self.train_metrics.compute()
 
     @torch.no_grad()
@@ -860,13 +869,16 @@ class PhaseTrainer:
 
         pbar = tqdm(self.val_loader,
                     desc=f'  Phase {self.phase} Validation', leave=False)
-        for images, targets in pbar:
+        for batch_idx, (images, targets) in enumerate(pbar):
             images = images.to(self.device)
             targets = {k: v.to(self.device) for k, v in targets.items()}
 
             predictions = self.model(images)
             losses = self.criterion(predictions, targets)
             self.val_metrics.update(predictions, targets, losses)
+
+            if getattr(__import__('config'), 'DEBUG_MODE', False) and batch_idx > 0:
+                break
 
         return self.val_metrics.compute()
 
@@ -890,7 +902,7 @@ class PhaseTrainer:
         print(f"  Validation:   {len(self.val_loader)} batches")
         print("=" * 70)
 
-        for epoch in range(1 if DEBUG_MODE else self.epochs):
+        for epoch in range(1 if getattr(__import__('config'), 'DEBUG_MODE', False) else self.epochs):
             t0 = time.time()
             train_m = self.train_epoch(epoch)
             val_m = self.validate()
