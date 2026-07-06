@@ -431,15 +431,19 @@ def analyze_dataset_anchors(dataset, num_anchors=NUM_ANCHORS):
         sample_iter = dataset.iter_annotations()
     elif hasattr(dataset, 'datasets'): # PyTorch ConcatDataset
         def concat_iter():
+            import random
             for ds in dataset.datasets:
                 if hasattr(ds, 'iter_annotations'):
                     yield from ds.iter_annotations()
                 else:
-                    for i in range(len(ds)):
+                    indices = random.sample(range(len(ds)), min(500, len(ds)))
+                    for i in indices:
                         yield ds[i][1:]
         sample_iter = concat_iter()
     else:
-        sample_iter = (dataset[i][1:] for i in range(len(dataset)))
+        import random
+        indices = random.sample(range(len(dataset)), min(1000, len(dataset)))
+        sample_iter = (dataset[i][1:] for i in indices)
 
     for annotations, (h_orig, w_orig) in sample_iter:
         for ann in annotations:
