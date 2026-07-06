@@ -13,7 +13,7 @@ from inference import ThermalInferenceEngine, calculate_iou_numpy
 
 # --- PATH CONFIGURATION ---
 V1_MODEL_PATH = 'checkpoints/best_microghost_thermal_v1.pth'
-V2_MODEL_PATH = 'checkpoints/best_microghost_thermal_v2.pth'
+V2_MODEL_PATH = 'checkpoints/best_microghost_thermal_v3.pth'
 
 def calculate_metrics(pred_pixels, gt_pixels, iou_thresh=0.5):
     matched_gts = set()

@@ -377,7 +377,7 @@ ALERT_CONFIG = {
 # ============================================================================
 MODEL_SAVE_DIR = 'checkpoints'
 BEST_MODEL_V1_PATH = os.path.join(MODEL_SAVE_DIR, 'best_microghost_thermal_v1.pth')
-BEST_MODEL_V2_PATH = os.path.join(MODEL_SAVE_DIR, 'best_microghost_thermal_v2.pth')
+BEST_MODEL_V2_PATH = os.path.join(MODEL_SAVE_DIR, 'best_microghost_thermal_v3.pth')
 BEST_MODEL_PATH = BEST_MODEL_V2_PATH
 LAST_MODEL_PATH = os.path.join(MODEL_SAVE_DIR, 'last_microghost_thermal.pth')
 EXPORT_DIR = 'exports'
