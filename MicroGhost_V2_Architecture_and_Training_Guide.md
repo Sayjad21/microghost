@@ -12,7 +12,8 @@
 3. [New Architecture: MicroGhost-V2](#3-new-architecture-microghost-v2)
 4. [What Replaces FPN — The BiFusion Neck](#4-what-replaces-fpn--the-bifusion-neck)
 5. [The Full Model: Layer-by-Layer Specification](#5-the-full-model-layer-by-layer-specification)
-6. [Dataset Strategy: What You Have and How to Use It] 7. [The 4-Phase Training Pipeline](#7-the-4-phase-training-pipeline)
+6. [Dataset Strategy: What You Have and How to Use It](#6-dataset-strategy-what-you-have-and-how-to-use-it)
+7. [The 3-Phase Training Pipeline](#7-the-3-phase-training-pipeline)
 8. [Loss Functions: What Changes](#8-loss-functions-what-changes)
 9. [Config Changes Checklist](#9-config-changes-checklist)
 10. [Implementation Priorities](#10-implementation-priorities)
@@ -436,8 +437,7 @@ The added ~6.4K parameters doubles the backbone (dual branch vs single shared), 
 | WiSARD paired subset | ✅ ~15,453 pairs | Wild terrain, foliage occlusion, all weather | 2 |
 | ForestPersons (RGB) | ❌ RGB ONLY | Human silhouettes through tree canopy, ground-level perspective | 2 (RGB branch only) |
 | ForestPersons IR | ❌ Thermal ONLY | Human thermal through canopy, ground-level perspective | 2 (thermal branch only) |
-| MCOD | ✅ Paired | Camouflaged objects vs natural backgrounds, multispectral | 3 |
-| Camo-M3FD | ✅ Paired | Foreground-background similarity in visible+thermal | 3 |
+
 
 ### 6.2 The Critical Insight About ForestPersons
 
@@ -454,7 +454,7 @@ This is why the dual-branch architecture makes ForestPersons usable even without
 
 ---
 
-## 7. The 4-Phase Training Pipeline
+## 7. The 3-Phase Training Pipeline
 
 ### Phase 1 — Human Shape Foundation (LLVIP Only)
 
@@ -521,41 +521,14 @@ def cmm_loss(model, batch_rgb, batch_thm, labels, alpha=0.5):
 
 ---
 
-### Phase 3 — Camouflage Fine-Tuning (MCOD + Camo-M3FD)
+### Phase 3 — Full Mix Polish
 
-**Goal:** Teach the EnergyGate and Classifier to detect foreground-background similarity as a signal for camouflage, not as a reason to suppress detection.
-
-**Freeze strategy:** Freeze `rgb_stem`, `thm_stem`, `rgb_scale1`, `thm_scale1`. Only update Scale 2, Scale 3, EnergyGate, BiFusion Neck, Heads, Classifier. This preserves the low-level feature detectors from Phases 1 and 2 while fine-tuning the high-level fusion logic.
+**Goal:** Final end-to-end tuning with everything unlocked, very low learning rate, full dataset mix using only target environments.
 
 ```
-Dataset:    MCOD (multispectral camouflaged, all scenes)
-            Camo-M3FD (camouflaged-similarity RGB+T pairs)
-            WiSARD (10% — prevents forgetting)
+Dataset:    Full mix: LLVIP (34%) + ForestPersons RGB (33%) + ForestPersons IR (33%)
 
-Sampling:   50% MCOD  |  40% Camo-M3FD  |  10% WiSARD
-
-Epochs:     30-40
-LR:         5e-5 (very low — fine-tuning only)
-Batch size: 16 (smaller for small dataset)
-Freeze:     rgb_stem, thm_stem, rgb_scale1, thm_scale1
-CMM α:      0.5 (maintain from Phase 2)
-Loss:       L_bbox + L_obj + L_cls + 0.15 * L_contrast
-            Add L_gate_regularizer (see Section 8)
-```
-
-**Checkpoint at:** best combined mAP across MCOD + WiSARD val splits
-
----
-
-### Phase 4 — Unfreeze and Polish
-
-**Goal:** Final end-to-end tuning with everything unlocked, very low learning rate, full dataset mix.
-
-```
-Dataset:    Full mix: LLVIP (10%) + WiSARD (45%) +
-            ForestPersons RGB+IR as CMM (30%) + MCOD+Camo-M3FD (15%)
-
-Epochs:     20-30
+Epochs:     20-25
 LR:         1e-5 (very low)
 Batch size: 32
 Freeze:     Nothing
@@ -713,11 +686,11 @@ Train the full MicroGhost-V2 from scratch on LLVIP. This takes the same time as 
 
 Activate all CMM modes, activate contrast loss. Train on the full domain-transfer dataset mix.
 
-### Step 7 — Phase 3 (Camouflage)
+### Step 7 — Phase 3 (Polish)
 
-Freeze early layers, fine-tune on MCOD + Camo-M3FD + gate regularizer.
+Final end-to-end tuning with everything unlocked on LLVIP + ForestPersons.
 
-### Step 8 — Phase 4 (Polish) → Export → Deploy
+### Step 8 — Export → Deploy
 
 ---
 

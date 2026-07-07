@@ -37,8 +37,8 @@ def parse_args():
     train_parser.add_argument('--batch-size', type=int, default=None, help='Override config batch size')
     train_parser.add_argument('--num-workers', type=int, default=0, help='Override config num workers (CPU scaling)')
     train_parser.add_argument('--no-kmeans', action='store_true', help='Skip K-Means anchor optimization')
-    train_parser.add_argument('--phase', type=int, default=None, choices=[1, 2, 3, 4],
-                              help='Run a specific V2 training phase (1-4). If omitted, runs all phases.')
+    train_parser.add_argument('--phase', type=int, default=None, choices=[1, 2, 3],
+                              help='Run a specific V2 training phase (1-3). If omitted, runs all phases.')
     train_parser.add_argument('--debug', action='store_true', help='Run 1 toy epoch per phase for debugging')
 
     # Evaluate
@@ -105,7 +105,7 @@ def main():
             from torch.utils.data import ConcatDataset
             
             raw_train_datasets = []
-            for ds_name in ['llvip', 'forestpersons', 'forestpersonsir', 'camod3fd']:
+            for ds_name in ['llvip', 'forestpersons', 'forestpersonsir']:
                 ds_path = get_dataset_path(ds_name)
                 if os.path.exists(ds_path):
                     try:
@@ -127,7 +127,7 @@ def main():
         print_model_analysis(model)
         benchmark_model(model)
 
-        phases_to_run = [args.phase] if args.phase else [1, 2, 3, 4]
+        phases_to_run = [args.phase] if args.phase else [1, 2, 3]
 
         # If starting from a later phase, attempt to load previous best model
         if phases_to_run[0] > 1 and os.path.exists(BEST_MODEL_PATH):
@@ -179,11 +179,12 @@ def main():
         print("\n[2/3] Generating Visual Diagnostics...")
         try:
             from diagnose import run_visual_diagnostics
-            for dset in ['llvip', 'camod3fd', 'forestpersons', 'forestpersonsir']:
+            for dset in ['llvip', 'forestpersons', 'forestpersonsir']:
                 print(f"  -> Diagnosing {dset}...")
                 run_visual_diagnostics(
                     dataset_name=dset, 
                     dataset_root=get_dataset_path(dset),
+                    output_dir=f"diagnostic_results/{dset}",
                     limit=10 if getattr(__import__('config'), 'DEBUG_MODE', False) else None
                 )
         except Exception as e:
