@@ -2,7 +2,7 @@
 
 Use this deployment path when you want everything on free tiers:
 
-- Hugging Face Gradio Space on CPU Basic for inference
+- Hugging Face Gradio Space on CPU Basic or ZeroGPU for inference
 - Vercel free project for the frontend
 
 Project structure:
@@ -45,7 +45,7 @@ Create the Space:
 Name: microghost-thermal
 SDK: Gradio
 Visibility: Public
-Hardware: CPU Basic
+Hardware: CPU Basic, or ZeroGPU if CPU Basic is locked
 ```
 
 Upload or push the contents of:
@@ -80,6 +80,8 @@ Expected:
 ```json
 {"ok": true, "sdk": "gradio", "model_exists": true}
 ```
+
+If you use ZeroGPU, the backend includes `@spaces.GPU(duration=60)` so the Space passes the ZeroGPU startup check.
 
 ## 3. Deploy the Vercel frontend
 
