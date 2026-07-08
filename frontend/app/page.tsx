@@ -284,7 +284,6 @@ export default function Home() {
             <div className="detections-table__head">
               <span>Class</span>
               <span>Conf</span>
-              <span>Temp</span>
               <span>Lap var</span>
               <span>Box</span>
             </div>
@@ -292,7 +291,6 @@ export default function Home() {
               <div className="detections-table__row" key={`${det.class}-${index}`}>
                 <span>{det.class}</span>
                 <span>{det.confidence.toFixed(2)}</span>
-                <span>{det.temperature_c.toFixed(1)} C</span>
                 <span>{det.laplacian_variance.toFixed(1)}</span>
                 <span>{det.bbox.map((v) => v.toFixed(2)).join(", ")}</span>
               </div>
