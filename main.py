@@ -9,6 +9,7 @@ import os
 import argparse
 import torch
 import numpy as np
+import cv2
 
 from config import (
     ACTIVE_DATASET, DATASET_ROOT, MODEL_SAVE_DIR, EXPORT_DIR, LOG_DIR,
@@ -60,10 +61,30 @@ def parse_args():
 
     # Infer
     infer_parser = subparsers.add_parser('infer', help='Run inference on an image')
-    infer_parser.add_argument('--image-rgb', type=str, required=True, help='Path to RGB image')
+    infer_parser.add_argument('--image-rgb', type=str, default=None, help='Path to RGB image')
     infer_parser.add_argument('--image-thermal', type=str, required=True, help='Path to thermal image')
     infer_parser.add_argument('--model-path', type=str, default=BEST_MODEL_PATH)
     infer_parser.add_argument('--num-anchors', type=int, default=None, help='Override num_anchors')
+    infer_parser.add_argument(
+        '--conf-thresh', '--conf-threshold',
+        dest='conf_thresh',
+        type=float,
+        default=None,
+        help='Override detection confidence threshold; thermal-only defaults to 0.20'
+    )
+    infer_parser.add_argument(
+        '--lap-thresh', '--lap-thres',
+        dest='lap_thresh',
+        type=float,
+        default=80.0,
+        help='Reject detections with RGB crop Laplacian variance below this value'
+    )
+    infer_parser.add_argument(
+        '--lap-bypass-conf',
+        type=float,
+        default=None,
+        help='Optional: skip the Laplacian gate for detections at or above this confidence'
+    )
 
     # Export
     export_parser = subparsers.add_parser('export', help='Export model to ONNX/TFLite')
@@ -223,15 +244,38 @@ def main():
 
     elif args.mode == 'infer':
         engine = ThermalInferenceEngine(model_path=args.model_path, override_num_anchors=args.num_anchors)
-        img_bgr = cv2.imread(args.image_rgb, cv2.IMREAD_COLOR)
         img_thermal = cv2.imread(args.image_thermal, cv2.IMREAD_GRAYSCALE)
 
-        if img_bgr is None or img_thermal is None:
-            print("Error: Could not load one or both images.")
+        if img_thermal is None:
+            print("Error: Could not load thermal image.")
             return
 
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        detections = engine.detect_confirmed(img_rgb, img_thermal, lap_thresh=80.0) 
+        if args.image_rgb:
+            img_bgr = cv2.imread(args.image_rgb, cv2.IMREAD_COLOR)
+            if img_bgr is None:
+                print("Error: Could not load RGB image.")
+                return
+            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            lap_image = img_rgb
+            output_source = args.image_rgb
+            conf_thresh = args.conf_thresh
+        else:
+            print("No RGB image provided. Running thermal-only inference with a blank RGB branch.")
+            h_thm, w_thm = img_thermal.shape[:2]
+            img_rgb = np.zeros((h_thm, w_thm, 3), dtype=np.uint8)
+            img_bgr = cv2.cvtColor(img_thermal, cv2.COLOR_GRAY2BGR)
+            lap_image = img_thermal
+            output_source = args.image_thermal
+            conf_thresh = 0.20 if args.conf_thresh is None else args.conf_thresh
+
+        detections = engine.detect_confirmed(
+            img_rgb,
+            img_thermal,
+            lap_image=lap_image,
+            lap_thresh=args.lap_thresh,
+            high_conf_bypass=args.lap_bypass_conf,
+            conf_threshold=conf_thresh,
+        )
         
         print("\n--- Detection Results ---")
         if not detections:
@@ -239,7 +283,8 @@ def main():
         else:
             for i, det in enumerate(detections):
                 gw = det.get('gate_w', {})
-                gw_str = f"[Gate R:{gw.get('rgb',0):.2f}/T:{gw.get('thm',0):.2f}] " if gw else ""
+                lap_str = f"LapVar: {det.get('lap_var', 0.0):.1f} | "
+                gw_str = lap_str + (f"[Gate R:{gw.get('rgb',0):.2f}/T:{gw.get('thm',0):.2f}] " if gw else "")
                 print(f"[{i+1}] Intrusion! Conf: {det['combined_conf']:.2f} | "
                       f"Temp: {det.get('temp_c', 0)}°C | {gw_str}BBox: {det['bbox']}")
 
@@ -252,7 +297,7 @@ def main():
             cv2.putText(vis, label, (x1, max(y1 - 6, 10)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         os.makedirs('runs', exist_ok=True)
-        stem = os.path.splitext(os.path.basename(args.image_rgb))[0]
+        stem = os.path.splitext(os.path.basename(output_source))[0]
         out_path = os.path.join('runs', f'{stem}_det.jpg')
         cv2.imwrite(out_path, vis)
         
@@ -264,8 +309,8 @@ def main():
         out_thermal = os.path.join('runs', f'{stem}_thermal_det.jpg')
         cv2.imwrite(out_thermal, thermal_vis)
         
-        print(f"Saved → {out_thermal}")
-        print(f"Saved → {out_path}")
+        print(f"Saved -> {out_thermal}")
+        print(f"Saved -> {out_path}")
         
         try:
             os.startfile(out_path)

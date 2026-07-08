@@ -12,3 +12,8 @@ training_history.png
 confusion_matrix.png
 outputnote.txt
 data/
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+backend/model/__pycache__/
+backend/model/microghost/__pycache__/
