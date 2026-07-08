@@ -1,13 +1,18 @@
-# MicroGhost Web Deployment
+# MicroGhost Free Web Deployment
 
-This repo now has the requested web structure:
+Use this deployment path when you want everything on free tiers:
+
+- Hugging Face Gradio Space on CPU Basic for inference
+- Vercel free project for the frontend
+
+Project structure:
 
 ```text
 backend/
   model/
     app.py
-    Dockerfile
     requirements.txt
+    README.md
     checkpoints/
     microghost/
 frontend/
@@ -15,117 +20,123 @@ frontend/
   package.json
 ```
 
-The model runs on Hugging Face. The Vercel app is only the user interface plus a small proxy route, so Vercel does not need to install PyTorch or load the checkpoint.
+The model runs on Hugging Face. Vercel only hosts the user interface and forwards uploads to Hugging Face.
 
-## 1. Deploy the Hugging Face backend
+## 1. Push this repo to GitHub
 
-Create a Hugging Face Space:
-
-- SDK: `Docker`
-- Hardware: start with the default CPU Basic tier
-- Files to upload: everything inside `backend/model`
-
-The backend starts with:
-
-```text
-uvicorn app:app --host 0.0.0.0 --port 7860
+```powershell
+cd "D:\Hackathons\Ibtida_Saif_Sayjad_trio\FINAL\microghost"
+git add .gitignore inference.py main.py run_infer.py WEB_DEPLOYMENT.md backend frontend checkpoints/best_microghost_thermal_v3.pth
+git commit -m "Add free web app deployment"
+git push origin main
 ```
 
-The default model path is:
+## 2. Create the free Hugging Face backend
+
+Go to:
 
 ```text
+https://huggingface.co/new-space
+```
+
+Create the Space:
+
+```text
+Name: microghost-thermal
+SDK: Gradio
+Visibility: Public
+Hardware: CPU Basic
+```
+
+Upload or push the contents of:
+
+```text
+backend/model
+```
+
+to the root of that Hugging Face Space repo.
+
+The Space root should contain:
+
+```text
+app.py
+requirements.txt
+README.md
 checkpoints/best_microghost_thermal_v3.pth
+microghost/config.py
+microghost/inference.py
+microghost/model.py
+microghost/preprocessing.py
 ```
 
-If you put the checkpoint somewhere else, add this Hugging Face Space variable:
+After the build finishes, test:
 
 ```text
-MODEL_PATH=/app/checkpoints/best_microghost_thermal_v3.pth
+https://YOUR_USERNAME-microghost-thermal.hf.space/health
 ```
 
-After the Space builds, check:
+Expected:
 
-```text
-https://your-user-your-space.hf.space/health
+```json
+{"ok": true, "sdk": "gradio", "model_exists": true}
 ```
 
-## 2. Deploy the Vercel frontend
+## 3. Deploy the Vercel frontend
 
-Create a Vercel project from this repo and set:
+Go to Vercel and import your GitHub repo.
+
+Use:
 
 ```text
 Root Directory: frontend
-Framework: Next.js
+Framework Preset: Next.js
 Build Command: npm run build
-Output Directory: .next
+Install Command: npm install
 ```
 
 Add this Vercel environment variable:
 
 ```text
-HF_SPACE_URL=https://your-user-your-space.hf.space
+HF_SPACE_URL=https://YOUR_USERNAME-microghost-thermal.hf.space
 ```
 
-If the Hugging Face Space is private, also add:
+Deploy.
 
-```text
-HF_TOKEN=hf_your_token
-```
+## 4. Test the live app
 
-## 3. CORS
+Open the Vercel URL.
 
-For a public Space, the backend defaults to allowing all origins. For a stricter deployment, add this Hugging Face Space variable:
+Try:
 
-```text
-CORS_ORIGINS=https://your-vercel-app.vercel.app
-```
+- Thermal only
+- RGB only
+- RGB + thermal
 
-For local frontend development:
+Use advanced tuning:
 
-```text
-CORS_ORIGINS=http://localhost:3000
-```
+- `lap_thresh=80` as the normal starting point
+- `conf_thresh=0.18` to `0.20` for small or crouched people
+- `lap_thresh=100` to `120` for hot bonnet false positives
 
-## 4. Local development
+## 5. Updating later
 
-Backend:
+Frontend changes:
 
 ```powershell
-cd backend/model
-python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-python -m pip install -r requirements.txt
-python -m uvicorn app:app --reload --port 7860
+cd "D:\Hackathons\Ibtida_Saif_Sayjad_trio\FINAL\microghost"
+git add frontend
+git commit -m "Update frontend"
+git push origin main
 ```
 
-Frontend:
+Backend changes:
+
+Copy the changed files from `backend/model` into your Hugging Face Space repo, then:
 
 ```powershell
-cd frontend
-Copy-Item .env.example .env.local
+git add .
+git commit -m "Update backend"
+git push
 ```
 
-Edit `.env.local`:
-
-```text
-HF_SPACE_URL=http://localhost:7860
-```
-
-Then run:
-
-```powershell
-npm install
-npm run dev
-```
-
-Open:
-
-```text
-http://localhost:3000
-```
-
-## Notes
-
-- Upload thermal + RGB for best false-positive filtering.
-- Upload only thermal or only RGB if that is all you have. The missing modality is replaced with a blank branch.
-- `lap_thresh` defaults to `80`.
-- Single-image inference uses a more sensitive confidence default of `0.20`.
+Hugging Face rebuilds the Space after every push.

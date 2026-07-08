@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Optional
 
 import cv2
+import gradio as gr
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -21,14 +23,14 @@ sys.path.insert(0, str(CORE_DIR))
 from inference import ThermalInferenceEngine  # noqa: E402
 
 
-app = FastAPI(
+api = FastAPI(
     title="MicroGhost Thermal Inference",
     version="1.0.0",
-    description="FastAPI wrapper for MicroGhost RGB/Thermal intrusion detection.",
+    description="Free Gradio Space wrapper with a FastAPI /analyze endpoint.",
 )
 
 cors_origins = os.environ.get("CORS_ORIGINS", "*")
-app.add_middleware(
+api.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in cors_origins.split(",") if origin.strip()],
     allow_credentials=False,
@@ -109,39 +111,11 @@ def normalize_detection(det):
     }
 
 
-@app.get("/")
-def root():
-    return {
-        "service": "microghost-thermal-inference",
-        "endpoints": {"health": "/health", "analyze": "/analyze"},
-    }
-
-
-@app.get("/health")
-def health():
-    model_path = Path(os.environ.get("MODEL_PATH", DEFAULT_MODEL_PATH))
-    return {
-        "ok": True,
-        "model_exists": model_path.exists(),
-        "model_path": str(model_path),
-    }
-
-
-@app.post("/analyze")
-async def analyze(
-    rgb_image: Optional[UploadFile] = File(default=None),
-    thermal_image: Optional[UploadFile] = File(default=None),
-    conf_thresh: Optional[float] = Form(default=None),
-    lap_thresh: float = Form(default=80.0),
-    lap_bypass_conf: Optional[float] = Form(default=None),
-):
+def run_analysis(rgb_bgr, thermal_gray, conf_thresh=None, lap_thresh=80.0, lap_bypass_conf=None):
     started = time.perf_counter()
 
-    rgb_bgr = await read_upload_image(rgb_image, cv2.IMREAD_COLOR)
-    thermal_gray = await read_upload_image(thermal_image, cv2.IMREAD_GRAYSCALE)
-
     if rgb_bgr is None and thermal_gray is None:
-        raise HTTPException(status_code=400, detail="Upload an RGB image, a thermal image, or both.")
+        raise ValueError("Upload an RGB image, a thermal image, or both.")
 
     if rgb_bgr is not None and thermal_gray is not None:
         mode = "paired"
@@ -193,8 +167,122 @@ async def analyze(
             "lap_bypass_confidence": lap_bypass_conf,
         },
         "detections": [normalize_detection(det) for det in detections],
+        "annotated_primary_bgr": annotated_primary,
+        "annotated_thermal_bgr": annotated_thermal,
+    }
+
+
+@api.get("/")
+def root():
+    return RedirectResponse(url="/ui")
+
+
+@api.get("/health")
+def health():
+    model_path = Path(os.environ.get("MODEL_PATH", DEFAULT_MODEL_PATH))
+    return {
+        "ok": True,
+        "sdk": "gradio",
+        "model_exists": model_path.exists(),
+        "model_path": str(model_path),
+    }
+
+
+@api.post("/analyze")
+async def analyze(
+    rgb_image: Optional[UploadFile] = File(default=None),
+    thermal_image: Optional[UploadFile] = File(default=None),
+    conf_thresh: Optional[float] = Form(default=None),
+    lap_thresh: float = Form(default=80.0),
+    lap_bypass_conf: Optional[float] = Form(default=None),
+):
+    rgb_bgr = await read_upload_image(rgb_image, cv2.IMREAD_COLOR)
+    thermal_gray = await read_upload_image(thermal_image, cv2.IMREAD_GRAYSCALE)
+
+    try:
+        result = run_analysis(
+            rgb_bgr,
+            thermal_gray,
+            conf_thresh=conf_thresh,
+            lap_thresh=lap_thresh,
+            lap_bypass_conf=lap_bypass_conf,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "mode": result["mode"],
+        "count": result["count"],
+        "elapsed_ms": result["elapsed_ms"],
+        "thresholds": result["thresholds"],
+        "detections": result["detections"],
         "images": {
-            "annotated_primary": data_url(annotated_primary),
-            "annotated_thermal": data_url(annotated_thermal),
+            "annotated_primary": data_url(result["annotated_primary_bgr"]),
+            "annotated_thermal": data_url(result["annotated_thermal_bgr"]),
         },
     }
+
+
+def gradio_analyze(rgb_image, thermal_image, conf_thresh, lap_thresh):
+    rgb_bgr = None
+    thermal_gray = None
+
+    if rgb_image is not None:
+        rgb_bgr = cv2.cvtColor(rgb_image.astype(np.uint8), cv2.COLOR_RGB2BGR)
+    if thermal_image is not None:
+        if thermal_image.ndim == 3:
+            thermal_gray = cv2.cvtColor(thermal_image.astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        else:
+            thermal_gray = thermal_image.astype(np.uint8)
+
+    result = run_analysis(
+        rgb_bgr,
+        thermal_gray,
+        conf_thresh=None if conf_thresh <= 0 else conf_thresh,
+        lap_thresh=lap_thresh,
+    )
+
+    primary_rgb = cv2.cvtColor(result["annotated_primary_bgr"], cv2.COLOR_BGR2RGB)
+    thermal_rgb = cv2.cvtColor(result["annotated_thermal_bgr"], cv2.COLOR_BGR2RGB)
+    summary = {
+        "mode": result["mode"],
+        "count": result["count"],
+        "elapsed_ms": result["elapsed_ms"],
+        "thresholds": result["thresholds"],
+        "detections": result["detections"],
+    }
+    return primary_rgb, thermal_rgb, summary
+
+
+with gr.Blocks(title="MicroGhost Thermal Inference") as demo:
+    gr.Markdown("# MicroGhost Thermal Inference")
+    gr.Markdown("Upload RGB, thermal, or both. The Vercel frontend uses the same `/analyze` endpoint.")
+    with gr.Row():
+        rgb_input = gr.Image(label="RGB image", type="numpy", image_mode="RGB")
+        thermal_input = gr.Image(label="Thermal image", type="numpy", image_mode="L")
+    with gr.Accordion("Advanced tuning", open=False):
+        conf_input = gr.Slider(0, 0.9, value=0, step=0.01, label="Confidence override (0 = automatic)")
+        lap_input = gr.Slider(0, 220, value=80, step=5, label="Laplacian threshold")
+    analyze_button = gr.Button("Analyze", variant="primary")
+    with gr.Row():
+        primary_output = gr.Image(label="Primary annotated output")
+        thermal_output = gr.Image(label="Thermal annotated output")
+    json_output = gr.JSON(label="Detections")
+
+    analyze_button.click(
+        gradio_analyze,
+        inputs=[rgb_input, thermal_input, conf_input, lap_input],
+        outputs=[primary_output, thermal_output, json_output],
+        api_name="gradio_analyze",
+    )
+
+
+app = gr.mount_gradio_app(api, demo, path="/ui")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.environ.get("PORT", "7860"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
