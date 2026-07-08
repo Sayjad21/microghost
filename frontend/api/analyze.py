@@ -483,7 +483,7 @@ async def analyze(
         thermal_for_model = np.zeros((h, w), dtype=np.uint8)
         primary_bgr = rgb_bgr
         lap_image = rgb_for_model
-        effective_conf = 0.20 if conf_thresh is None else conf_thresh
+        effective_conf = 0.10 if conf_thresh is None else conf_thresh
         effective_lap = lap_thresh
 
     try:

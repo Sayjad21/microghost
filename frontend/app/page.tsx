@@ -198,7 +198,7 @@ export default function Home() {
             Advanced tuning
           </button>
           <p>
-            Laplacian filtering removes flat hot surfaces. Thermal-only confidence uses
+            Laplacian filtering removes flat hot surfaces. Single-image confidence uses
             a more sensitive default unless you override it.
           </p>
         </section>
