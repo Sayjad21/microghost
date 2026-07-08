@@ -1,0 +1,9 @@
+.vercel
+.next
+node_modules
+.env.local
+__pycache__/
+*.pyc
+_uv/
+uv.lock
+pyproject.toml

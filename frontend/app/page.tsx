@@ -157,7 +157,7 @@ export default function Home() {
           <h1>Thermal intrusion detection, ready for field images.</h1>
           <p className="hero-copy">
             Upload paired RGB and thermal images, or provide a single thermal or RGB frame.
-            The analysis runs through the hosted Hugging Face model.
+            The analysis runs on the hosted Vercel backend.
           </p>
         </div>
         <div className="status-panel">
