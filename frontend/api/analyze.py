@@ -202,7 +202,7 @@ def merge_related_detections(detections):
         x_overlap = max(0.0, min(ax2, bx2) - max(ax1, bx1))
         x_overlap_ratio = x_overlap / max(min(aw, bw), 1e-6)
         cx_gap = abs(((ax1 + ax2) / 2.0) - ((bx1 + bx2) / 2.0))
-        same_column = x_overlap_ratio >= 0.35 or cx_gap <= min(aw, bw) * 0.65
+        same_column = x_overlap_ratio >= 0.65 or cx_gap <= min(aw, bw) * 0.35
 
         y_overlap = max(0.0, min(ay2, by2) - max(ay1, by1))
         y_gap = max(0.0, max(ay1, by1) - min(ay2, by2))
