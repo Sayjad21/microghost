@@ -138,15 +138,13 @@ def filter_spurious_detections(detections):
     return kept
 
 
-def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
-                       anchor_sizes=None, conf_threshold=None, is_eval=False):
-    """
-    Decode SSD-style head outputs into detection candidates (normalized xyxy).
-    """
-    anchor_sizes = anchor_sizes or DEFAULT_ANCHOR_SIZES
-    
-    # Use appropriate threshold
-    if conf_threshold is None:
+def decode_predictions(obj_small, bbox_small, obj_large, bbox_large, anchor_sizes=None, is_eval=False, iou_pred=1.0):
+    if anchor_sizes is None:
+        anchor_sizes = DEFAULT_ANCHOR_SIZES
+
+    if getattr(__import__('config'), 'DEBUG_MODE', False):
+        conf_threshold = 0.05
+    else:
         conf_threshold = EVAL_CONFIDENCE_THRESHOLD if is_eval else CONFIDENCE_THRESHOLD
 
     small_grid_w, small_grid_h = INPUT_WIDTH // 8, INPUT_HEIGHT // 8
@@ -177,7 +175,7 @@ def decode_predictions(obj_small, bbox_small, obj_large, bbox_large,
                     gx, gy, grid_w, grid_h, anchor_sizes[a],
                 )
                 candidates.append({
-                    'conf': float(obj_probs[a, gy, gx]),
+                    'conf': float(obj_probs[a, gy, gx]) * iou_pred,
                     'bbox': bbox,
                 })
         return candidates
@@ -231,17 +229,21 @@ class ThermalInferenceEngine:
         with torch.no_grad():
             preds = self.model(img_tensor)
 
-        # 3. Extract boxes from both scales
+        # 3. Classifier predictions
+        num_classes = preds['label'].shape[1] - 1
+        cls_logits = preds['label'][:, :num_classes]
+        iou_pred = float(torch.sigmoid(preds['label'][:, num_classes])[0].item())
+        cls_probs = torch.softmax(cls_logits, dim=1)[0].cpu().numpy()
+        pred_class_idx = int(np.argmax(cls_probs))
+
+        # 4. Extract boxes from both scales with IoU-aware confidence
         final_detections = decode_predictions(
             preds['obj_small'][0], preds['bbox_small'][0],
             preds['obj_large'][0], preds['bbox_large'][0],
             anchor_sizes=self.anchor_sizes,
-            is_eval=is_eval
+            is_eval=is_eval,
+            iou_pred=iou_pred
         )
-
-        # 4. Classifier labels detections
-        cls_probs = torch.softmax(preds['label'], dim=1)[0].cpu().numpy()
-        pred_class_idx = int(np.argmax(cls_probs))
         
         # If classifier says background, return empty (unless in strict eval where we might bypass)
         if pred_class_idx == CLASS_MAP['background']:

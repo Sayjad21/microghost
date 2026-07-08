@@ -50,12 +50,17 @@ class GhostModule(nn.Module):
         init_channels = math.ceil(out_channels / ratio)
         new_channels = init_channels * (ratio - 1)
 
-        self.primary_conv = nn.Sequential(
-            nn.Conv2d(in_channels, init_channels, kernel_size, stride,
-                      kernel_size // 2, bias=False),
-            nn.BatchNorm2d(init_channels),
-            nn.ReLU6(inplace=True) if relu else nn.Identity(),
+        self.primary_conv = nn.Conv2d(in_channels, init_channels, kernel_size, stride,
+                                      kernel_size // 2, bias=False)
+        self.primary_bn = nn.BatchNorm2d(init_channels)
+        
+        # RepGhost parallel 1x1 for richer gradients during training
+        self.rep_1x1 = nn.Sequential(
+            nn.Conv2d(in_channels, init_channels, 1, stride, 0, bias=False),
+            nn.BatchNorm2d(init_channels)
         )
+        
+        self.primary_act = nn.ReLU6(inplace=True) if relu else nn.Identity()
 
         self.cheap_operation = nn.Sequential(
             nn.Conv2d(init_channels, new_channels, dw_kernel, 1,
@@ -65,7 +70,10 @@ class GhostModule(nn.Module):
         )
 
     def forward(self, x):
-        x1 = self.primary_conv(x)
+        x1 = self.primary_bn(self.primary_conv(x))
+        if self.training and hasattr(self, 'rep_1x1'):
+            x1 = x1 + self.rep_1x1(x)
+        x1 = self.primary_act(x1)
         x2 = self.cheap_operation(x1)
         out = torch.cat([x1, x2], dim=1)
         return out[:, :self.out_channels, :, :]
@@ -407,12 +415,16 @@ class EnergyGate(nn.Module):
         super().__init__()
         self.proj_rgb = nn.Conv2d(channels, 1, 1, bias=True)
         self.proj_thm = nn.Conv2d(channels, 1, 1, bias=True)
+        self.temperature = nn.Parameter(torch.ones(1) * 2.0)
 
     def forward(self, feat_rgb, feat_thm):
         e_rgb = self.proj_rgb(feat_rgb)          # (B, 1, H, W)
         e_thm = self.proj_thm(feat_thm)          # (B, 1, H, W)
+        
+        temp = torch.clamp(self.temperature, min=0.5, max=5.0)
+        
         weights = torch.softmax(
-            torch.stack([e_rgb, e_thm], dim=1),  # (B, 2, 1, H, W)
+            torch.stack([e_rgb, e_thm], dim=1) / temp,  # (B, 2, 1, H, W)
             dim=1
         )
         w_rgb = weights[:, 0]                    # (B, 1, H, W)
@@ -452,10 +464,10 @@ class BiFusionNeck(nn.Module):
 
         # Learned BiFPN weights (softmax-normalized)
         # Top-down: P3 = w1*rgb_s3 + w2*thm_s3
-        self.w_td = nn.Parameter(torch.ones(2))
+        self.w_td = nn.Parameter(torch.zeros(2))
 
         # Bottom-up P2: w3*s2 + w4*P3_upsampled
-        self.w_bu = nn.Parameter(torch.ones(2))
+        self.w_bu = nn.Parameter(torch.zeros(2))
 
         # DW-separable refinement convolutions
         self.refine_p3 = self._dw_sep(out_ch, out_ch)
@@ -479,16 +491,16 @@ class BiFusionNeck(nn.Module):
         lat_thm = self.lat_thm(feat_thm_s3)      # (B, CH, 8, 10)
 
         # ── Top-down: fuse S3 from both branches ──
-        w_td = F.relu(self.w_td)
-        w_td = w_td / (w_td.sum() + eps)
+        w_td = F.softplus(self.w_td) + eps
+        w_td = w_td / w_td.sum()
         p3_td = self.refine_p3(
             w_td[0] * lat_rgb + w_td[1] * lat_thm
         )                                        # (B, CH, 8, 10)
 
         # ── Bottom-up: upsample P3 and merge with S2 ──
         p3_up = F.interpolate(p3_td, size=lat_s2.shape[2:], mode='nearest')
-        w_bu = F.relu(self.w_bu)
-        w_bu = w_bu / (w_bu.sum() + eps)
+        w_bu = F.softplus(self.w_bu) + eps
+        w_bu = w_bu / w_bu.sum()
         p2_out = self.refine_p2(
             w_bu[0] * lat_s2 + w_bu[1] * p3_up
         )                                        # (B, CH, 16, 20)
@@ -525,7 +537,7 @@ class ReliabilityClassifier(nn.Module):
             nn.Linear(in_channels * 2, hidden_dim),
             nn.ReLU6(inplace=True),
             nn.Dropout(0.2),
-            nn.Linear(hidden_dim, num_classes),
+            nn.Linear(hidden_dim, num_classes + 1), # +1 for IoU regression
         )
 
     def forward(self, feat_p2, feat_p3, obj_p2, obj_p3, w_rgb, w_thm):
@@ -720,17 +732,27 @@ class MicroGhostV2(nn.Module):
         x_rgb = x[:, :3]       # (B, 3, H, W)
         x_thm = x[:, 3:]       # (B, 1, H, W)
 
+        # Modality masking to prevent BatchNorm shift artifacts on empty inputs
+        rgb_present = (x_rgb.abs().mean(dim=[1,2,3], keepdim=True) > 1e-5).float()
+        thm_present = (x_thm.abs().mean(dim=[1,2,3], keepdim=True) > 1e-5).float()
+
         # === RGB Branch (fully independent) ===
         feat_rgb = self.rgb_stem(x_rgb)             # (B, 16, 64, 80)
         feat_rgb = self.rgb_scale1(feat_rgb)        # (B, 24, 32, 40)
         feat_rgb_s2 = self.rgb_scale2(feat_rgb)     # (B, 32, 16, 20)
         feat_rgb_s3 = self.rgb_scale3(feat_rgb_s2)  # (B, 48, 8, 10)
+        
+        feat_rgb_s2 = feat_rgb_s2 * rgb_present
+        feat_rgb_s3 = feat_rgb_s3 * rgb_present
 
         # === Thermal Branch (fully independent) ===
         feat_thm = self.thm_stem(x_thm)             # (B, 16, 64, 80)
         feat_thm = self.thm_scale1(feat_thm)        # (B, 24, 32, 40)
         feat_thm_s2 = self.thm_scale2(feat_thm)     # (B, 32, 16, 20)
         feat_thm_s3 = self.thm_scale3(feat_thm_s2)  # (B, 48, 8, 10)
+        
+        feat_thm_s2 = feat_thm_s2 * thm_present
+        feat_thm_s3 = feat_thm_s3 * thm_present
 
         # === Energy Gate (learned modality weighting at S2) ===
         fused_s2, w_rgb, w_thm = self.energy_gate(feat_rgb_s2, feat_thm_s2)

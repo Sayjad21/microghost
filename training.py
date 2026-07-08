@@ -123,7 +123,7 @@ def ciou_loss(pred_boxes, target_boxes, eps=1e-7):
         alpha = v / (1 - iou + v + eps)
 
     ciou_val = iou - (center_dist_sq / c_sq) - (alpha * v)
-    return (1 - ciou_val).mean()
+    return (1 - ciou_val).mean(), iou
 
 
 class CIoUBBoxLoss(nn.Module):
@@ -145,6 +145,8 @@ class CIoUBBoxLoss(nn.Module):
         num_anchors = self.anchor_sizes.shape[0]
         total_loss = 0.0
         num_positive = 0
+        batch_ious = torch.zeros(batch_size, device=device)
+        batch_pos = torch.zeros(batch_size, device=device)
 
         for b in range(batch_size):
             for a in range(num_anchors):
@@ -182,13 +184,17 @@ class CIoUBBoxLoss(nn.Module):
                     anchor_size * torch.exp(tgt_lh.clamp(LOG_CLAMP_MIN, LOG_CLAMP_MAX)),
                 ], dim=1)
 
-                loss = ciou_loss(abs_pred, abs_tgt)
+                loss, iou_vals = ciou_loss(abs_pred, abs_tgt)
                 total_loss += loss * mask.sum()
                 num_positive += mask.sum()
+                batch_ious[b] += iou_vals.sum()
+                batch_pos[b] += mask.sum()
+
+        mean_ious = torch.where(batch_pos > 0, batch_ious / batch_pos, torch.zeros_like(batch_ious))
 
         if num_positive > 0:
-            return total_loss / num_positive
-        return torch.tensor(0.0, device=device, requires_grad=True)
+            return total_loss / num_positive, mean_ious
+        return torch.tensor(0.0, device=device, requires_grad=True), mean_ious
 
 
 # ============================================================================
@@ -271,10 +277,11 @@ def gate_regularizer(w_rgb, w_thm, lambda_g=None):
         lambda_g: weight multiplier
     """
     lambda_g = lambda_g if lambda_g is not None else GATE_REG_WEIGHT
+    eps = 1e-7
 
     # Entropy: -sum(p * log(p))
-    entropy = -(w_rgb * w_rgb.log().clamp(min=-10) +
-                w_thm * w_thm.log().clamp(min=-10))
+    entropy = -(w_rgb * (w_rgb + eps).log() +
+                w_thm * (w_thm + eps).log())
     # Negative sign: we want to MAXIMIZE entropy (minimize negative entropy)
     return -lambda_g * entropy.mean()
 
@@ -357,21 +364,29 @@ class MicroGhostV2Loss(nn.Module):
 
     def forward(self, predictions, targets):
         # Standard losses
-        loss_bbox_s = self.bbox_loss(
+        loss_bbox_s, iou_s = self.bbox_loss(
             predictions['bbox_small'], targets['bbox_small'],
             targets['obj_small'], self.small_grid_w, self.small_grid_h,
         )
-        loss_bbox_l = self.bbox_loss(
+        loss_bbox_l, iou_l = self.bbox_loss(
             predictions['bbox_large'], targets['bbox_large'],
             targets['obj_large'], self.large_grid_w, self.large_grid_h,
         )
         loss_obj_s = self.obj_loss(predictions['obj_small'], targets['obj_small'])
         loss_obj_l = self.obj_loss(predictions['obj_large'], targets['obj_large'])
-        loss_cls = self.cls_loss(predictions['label'], targets['label'])
+        
+        num_classes = predictions['label'].shape[1] - 1
+        cls_logits = predictions['label'][:, :num_classes]
+        iou_pred = torch.sigmoid(predictions['label'][:, num_classes])
+        
+        target_iou = (iou_s + iou_l) / 2.0
+        
+        loss_cls = self.cls_loss(cls_logits, targets['label'])
+        loss_iou = F.mse_loss(iou_pred, target_iou)
 
         total_bbox = self.bbox_weight * (loss_bbox_s + loss_bbox_l)
         total_obj = self.obj_weight * (loss_obj_s + loss_obj_l)
-        total_cls = self.class_weight * loss_cls
+        total_cls = self.class_weight * (loss_cls + loss_iou)
         total = total_bbox + total_obj + total_cls
 
         result = {
@@ -619,7 +634,7 @@ class Trainer:
             losses = self.criterion(predictions, targets)
 
             losses['total'].backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
             self.optimizer.step()
 
             self.train_metrics.update(predictions, targets, losses)
@@ -848,7 +863,7 @@ class PhaseTrainer:
             losses = self.criterion(predictions, targets)
 
             losses['total'].backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
             self.optimizer.step()
 
             self.train_metrics.update(predictions, targets, losses)
