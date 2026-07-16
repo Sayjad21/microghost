@@ -261,7 +261,6 @@ WEIGHT_DECAY = 5e-4
 EPOCHS = 50
 PATIENCE = 10
 NUM_WORKERS = 0
-MAX_GRAD_NORM = float(os.environ.get('MICROGHOST_MAX_GRAD_NORM', '2.0'))
 
 # Loss weights
 BBOX_WEIGHT = 3.0
@@ -396,7 +395,6 @@ def print_config():
     print(f"  Batch size:       {BATCH_SIZE}")
     print(f"  Learning rate:    {LEARNING_RATE}")
     print(f"  Epochs:           {EPOCHS} (patience={PATIENCE})")
-    print(f"  Max grad norm:    {MAX_GRAD_NORM}")
     print(f"  Active dataset:   {ACTIVE_DATASET}")
     print(f"  Log clamp:        [{LOG_CLAMP_MIN}, {LOG_CLAMP_MAX}]")
     print(f"  NMS IoU:          {NMS_IOU_THRESHOLD}")

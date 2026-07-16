@@ -1,0 +1,1 @@
+python main.py infer --image-rgb ./rgb/190003.jpg --image-thermal  ./thermal/190003.jpg --model-path .\checkpoints\best_microghost_thermal_v1.pth --num-anchors 2

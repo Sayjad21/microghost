@@ -1,0 +1,433 @@
+/kaggle/working/microghost
+Initializing training pipeline... (V2 mode: True)
+
+[V2] Running K-Means clustering on ALL datasets for universal anchors...
+[DEBUG] Resolving path for llvip...
+[DEBUG] Found llvip at /kaggle/input/datasets/saisumathappala/llvip-dataset/LLVIP
+[DEBUG] Resolving path for forestpersons...
+[DEBUG] Found forestpersons at /kaggle/input/datasets/sayjadrahman/forestpersons-subset-5k/ForestPersons
+[DEBUG] Resolving path for forestpersonsir...
+[DEBUG] Found forestpersonsir at /kaggle/input/datasets/sayjadrahman/forestpersonsir-subset-5k/ForestPersonsIR
+
+Analyzing dataset (Total Size: 20001 samples). Sub-sampling for speed...
+   Found 2791 bounding boxes
+   Aspect ratios: min=0.37, max=11.10, mean=3.12
+   Sizes: min=0.020, max=0.585, mean=0.105
+
+OPTIMAL ANCHORS:
+   Ratios (h/w): ['1.722', '3.341', '5.434']
+   Sizes:        ['0.0718', '0.1335', '0.4045']
+GridEncoder anchors updated!
+   Ratios: [1.7217747953704292, 3.340500600298943, 5.433984452466083]
+   Sizes: [0.0717509437717046, 0.13346257948562704, 0.4044514489729058]
+
+[OK] MicroGhost-V2:
+   Parameters:       139,337
+   Trainable:        139,337
+   Est. Size (FP32): 544.3 KB
+   Est. Size (FP16): 272.1 KB
+   Est. Size (INT8): 136.1 KB
+
+  Input buffer:            80.0 KB
+  Peak act (FP32):        480.0 KB
+  Peak act (INT8):        120.0 KB
+  Total arena INT8:       200.0 KB
+  Fits ESP32-S3:     OK (limit: 4000KB)
+
+  Layer                                     Params  Size (KB)
+  -----------------------------------------------------------
+  RGB Stem                                     400      1.6 KB
+  RGB Scale 1 (Ghost)                        3,584     14.0 KB
+  RGB Scale 2 (InvRes)                      16,608     64.9 KB
+  RGB Scale 3 (InvRes)                      33,024    129.0 KB
+  Thm Stem                                     256      1.0 KB
+  Thm Scale 1 (Ghost)                        3,584     14.0 KB
+  Thm Scale 2 (InvRes)                      16,608     64.9 KB
+  Thm Scale 3 (InvRes)                      33,024    129.0 KB
+  Energy Gate                                   66      0.3 KB
+  BiFusion Neck                             12,004     46.9 KB
+  Head Small                                 3,663     14.3 KB
+  Head Large                                 3,663     14.3 KB
+  Classifier                                12,804     50.0 KB
+  Aux Seg Head (train only)                     49      0.2 KB
+  -----------------------------------------------------------
+  TOTAL                                    139,337    544.3 KB
+
+==================================================
+RUNNING PERFORMANCE BENCHMARK (V2)
+==================================================
+Memory Estimates:
+  Flash (INT8 weights):  ~240.0 KB
+  Peak SRAM Arena:       200.0 KB
+  Fits ESP32-S3:         YES
+  Average Time:          17.15 ms
+  Throughput:            58.3 FPS
+==================================================
+[DEBUG] Resolving path for llvip...
+[DEBUG] Found llvip at /kaggle/input/datasets/saisumathappala/llvip-dataset/LLVIP
+ LLVIP [train]: 12025 RGB+Thermal pairs
+ LLVIP [test]: 3463 RGB+Thermal pairs
+
+============================================================
+  Phase 1 DataLoaders Created
+============================================================
+  Training:    12025 samples (375 batches)
+  Validation:   3463 samples (109 batches)
+  Batch size: 32
+============================================================
+======================================================================
+  PHASE 1: Human Shape Foundation (LLVIP)
+======================================================================
+  Device:       cuda
+  Epochs:       50 (patience=10)
+  LR:           0.001
+  CMM:          OFF
+  Contrast:     OFF
+  Gate Reg:     OFF
+  Trainable:    139,337
+  Train:        375 batches
+  Validation:   109 batches
+======================================================================
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  1/50 | 626.8s | LR: 9.8e-04 | Loss: 20.4127/5.5143 | IoU: 0.528 | ObjRec: 18.5% | Gate: R=0.39/T=0.61 *BEST*
+System -> CPU RAM: 2.5 GB (9.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  2/50 | 545.0s | LR: 9.0e-04 | Loss: 5.2369/5.2613 | IoU: 0.585 | ObjRec: 11.1% | Gate: R=0.34/T=0.66 *BEST*
+System -> CPU RAM: 2.5 GB (9.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  3/50 | 526.8s | LR: 7.9e-04 | Loss: 5.0239/5.1087 | IoU: 0.629 | ObjRec: 24.8% | Gate: R=0.19/T=0.81 *BEST*
+System -> CPU RAM: 2.5 GB (9.5%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  4/50 | 534.7s | LR: 6.5e-04 | Loss: 4.8328/5.1722 | IoU: 0.653 | ObjRec: 28.2% | Gate: R=0.13/T=0.87
+System -> CPU RAM: 2.5 GB (9.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  5/50 | 531.3s | LR: 5.0e-04 | Loss: 4.6288/5.1643 | IoU: 0.661 | ObjRec: 27.8% | Gate: R=0.09/T=0.91
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  6/50 | 550.6s | LR: 3.5e-04 | Loss: 4.5459/5.0597 | IoU: 0.667 | ObjRec: 25.5% | Gate: R=0.11/T=0.89 *BEST*
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  7/50 | 535.0s | LR: 2.1e-04 | Loss: 4.4826/5.0293 | IoU: 0.669 | ObjRec: 27.3% | Gate: R=0.08/T=0.92 *BEST*
+System -> CPU RAM: 2.5 GB (9.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  8/50 | 536.2s | LR: 9.6e-05 | Loss: 4.4440/4.9867 | IoU: 0.670 | ObjRec: 26.2% | Gate: R=0.06/T=0.94 *BEST*
+System -> CPU RAM: 2.5 GB (9.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  9/50 | 539.1s | LR: 2.5e-05 | Loss: 4.4138/5.0023 | IoU: 0.670 | ObjRec: 26.4% | Gate: R=0.06/T=0.94
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 10/50 | 535.9s | LR: 1.0e-03 | Loss: 4.3956/4.9987 | IoU: 0.672 | ObjRec: 25.7% | Gate: R=0.06/T=0.94
+System -> CPU RAM: 2.5 GB (9.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 11/50 | 541.1s | LR: 9.9e-04 | Loss: 4.4436/5.0788 | IoU: 0.664 | ObjRec: 22.9% | Gate: R=0.07/T=0.93
+System -> CPU RAM: 2.5 GB (9.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 12/50 | 528.2s | LR: 9.8e-04 | Loss: 4.4033/5.0257 | IoU: 0.673 | ObjRec: 32.0% | Gate: R=0.05/T=0.95
+System -> CPU RAM: 2.5 GB (9.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 13/50 | 538.4s | LR: 9.5e-04 | Loss: 4.3267/5.0295 | IoU: 0.672 | ObjRec: 36.9% | Gate: R=0.05/T=0.95
+System -> CPU RAM: 2.5 GB (9.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 14/50 | 540.8s | LR: 9.0e-04 | Loss: 4.2467/4.9864 | IoU: 0.677 | ObjRec: 39.1% | Gate: R=0.03/T=0.97 *BEST*
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 15/50 | 530.3s | LR: 8.5e-04 | Loss: 4.1888/4.9652 | IoU: 0.682 | ObjRec: 41.0% | Gate: R=0.04/T=0.96 *BEST*
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 16/50 | 526.8s | LR: 7.9e-04 | Loss: 4.1514/5.1519 | IoU: 0.670 | ObjRec: 41.9% | Gate: R=0.03/T=0.97
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 17/50 | 530.1s | LR: 7.3e-04 | Loss: 4.1072/5.0244 | IoU: 0.689 | ObjRec: 42.9% | Gate: R=0.03/T=0.97
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 18/50 | 529.2s | LR: 6.5e-04 | Loss: 4.0651/5.1000 | IoU: 0.681 | ObjRec: 43.7% | Gate: R=0.03/T=0.97
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 19/50 | 519.7s | LR: 5.8e-04 | Loss: 4.0521/5.0667 | IoU: 0.692 | ObjRec: 43.5% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 20/50 | 521.4s | LR: 5.0e-04 | Loss: 4.0090/4.9266 | IoU: 0.674 | ObjRec: 42.0% | Gate: R=0.02/T=0.98 *BEST*
+System -> CPU RAM: 2.5 GB (9.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 21/50 | 521.3s | LR: 4.2e-04 | Loss: 3.9814/5.0206 | IoU: 0.682 | ObjRec: 42.4% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 22/50 | 527.6s | LR: 3.5e-04 | Loss: 3.9466/5.0544 | IoU: 0.688 | ObjRec: 43.1% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 23/50 | 539.0s | LR: 2.7e-04 | Loss: 3.9314/5.0149 | IoU: 0.689 | ObjRec: 44.2% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.5 GB (9.8%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 24/50 | 547.7s | LR: 2.1e-04 | Loss: 3.9120/5.0342 | IoU: 0.687 | ObjRec: 43.4% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 25/50 | 547.6s | LR: 1.5e-04 | Loss: 3.8853/5.0600 | IoU: 0.688 | ObjRec: 44.2% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 26/50 | 538.9s | LR: 9.6e-05 | Loss: 3.8820/5.0624 | IoU: 0.689 | ObjRec: 44.8% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 27/50 | 524.0s | LR: 5.5e-05 | Loss: 3.8608/5.0560 | IoU: 0.689 | ObjRec: 44.3% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.5 GB (9.7%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 28/50 | 535.0s | LR: 2.5e-05 | Loss: 3.8403/5.0575 | IoU: 0.687 | ObjRec: 45.5% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.5 GB (9.8%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 29/50 | 570.2s | LR: 7.1e-06 | Loss: 3.8398/5.0632 | IoU: 0.689 | ObjRec: 45.4% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.5 GB (9.8%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 30/50 | 589.3s | LR: 1.0e-03 | Loss: 3.8129/5.0456 | IoU: 0.691 | ObjRec: 45.2% | Gate: R=0.02/T=0.98
+
+  Early stopping -- no improvement for 10 epochs.
+
+  Phase 1 complete. Best epoch: 20, Best val loss: 4.9266
+  Saved training history to training_history_v2_phase1.png
+[DEBUG] Resolving path for forestpersons...
+[DEBUG] Found forestpersons at /kaggle/input/datasets/sayjadrahman/forestpersons-subset-5k/ForestPersons
+ ForestPersons (rgb) [train]: 3976 single-modality samples
+ ForestPersons (rgb) [val]: 994 single-modality samples
+[DEBUG] Resolving path for forestpersonsir...
+[DEBUG] Found forestpersonsir at /kaggle/input/datasets/sayjadrahman/forestpersonsir-subset-5k/ForestPersonsIR
+ ForestPersons (thermal) [train]: 4000 single-modality samples
+ ForestPersons (thermal) [val]: 1000 single-modality samples
+[DEBUG] Resolving path for llvip...
+[DEBUG] Found llvip at /kaggle/input/datasets/saisumathappala/llvip-dataset/LLVIP
+ LLVIP [train]: 12025 RGB+Thermal pairs
+ LLVIP [test]: 3463 RGB+Thermal pairs
+
+============================================================
+  Phase 2 DataLoaders Created
+============================================================
+  Training:     5595 samples (174 batches)
+  Validation:   5457 samples (171 batches)
+  Batch size: 32
+============================================================
+======================================================================
+  PHASE 2: Jungle Domain Transfer (ForestPersons + LLVIP)
+======================================================================
+  Device:       cuda
+  Epochs:       60 (patience=10)
+  LR:           0.0002
+  CMM:          ON
+  Contrast:     ON
+  Gate Reg:     OFF
+  Trainable:    139,337
+  Train:        174 batches
+  Validation:   171 batches
+======================================================================
+System -> CPU RAM: 2.7 GB (10.3%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  1/60 | 322.5s | LR: 2.0e-04 | Loss: 7.7341/6.9486 | IoU: 0.623 | ObjRec: 39.5% | Gate: R=0.03/T=0.97 *BEST*
+System -> CPU RAM: 2.7 GB (10.3%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  2/60 | 298.8s | LR: 1.9e-04 | Loss: 7.1833/6.5582 | IoU: 0.626 | ObjRec: 39.5% | Gate: R=0.02/T=0.98 *BEST*
+System -> CPU RAM: 2.7 GB (10.2%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  3/60 | 293.0s | LR: 1.7e-04 | Loss: 6.2256/6.2730 | IoU: 0.627 | ObjRec: 39.5% | Gate: R=0.02/T=0.98 *BEST*
+System -> CPU RAM: 2.7 GB (10.3%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  4/60 | 273.1s | LR: 1.5e-04 | Loss: 6.3218/6.1783 | IoU: 0.624 | ObjRec: 38.3% | Gate: R=0.02/T=0.98 *BEST*
+System -> CPU RAM: 2.7 GB (10.3%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  5/60 | 269.5s | LR: 1.3e-04 | Loss: 5.9249/6.0087 | IoU: 0.627 | ObjRec: 39.0% | Gate: R=0.02/T=0.98 *BEST*
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  6/60 | 261.8s | LR: 1.0e-04 | Loss: 5.7385/6.0329 | IoU: 0.631 | ObjRec: 38.8% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  7/60 | 261.1s | LR: 7.5e-05 | Loss: 5.9644/5.9885 | IoU: 0.626 | ObjRec: 38.1% | Gate: R=0.01/T=0.99 *BEST*
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  8/60 | 269.3s | LR: 5.1e-05 | Loss: 5.8189/5.9666 | IoU: 0.628 | ObjRec: 38.8% | Gate: R=0.01/T=0.99 *BEST*
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  9/60 | 270.8s | LR: 3.0e-05 | Loss: 5.5443/5.9565 | IoU: 0.630 | ObjRec: 38.6% | Gate: R=0.01/T=0.99 *BEST*
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 10/60 | 268.8s | LR: 1.4e-05 | Loss: 5.7814/5.9607 | IoU: 0.630 | ObjRec: 39.0% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.3%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 11/60 | 265.9s | LR: 4.4e-06 | Loss: 5.7247/5.9795 | IoU: 0.630 | ObjRec: 38.8% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.3%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 12/60 | 265.5s | LR: 2.0e-04 | Loss: 5.7163/5.9953 | IoU: 0.629 | ObjRec: 38.9% | Gate: R=0.02/T=0.98
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 13/60 | 273.5s | LR: 2.0e-04 | Loss: 5.6503/5.9816 | IoU: 0.634 | ObjRec: 41.2% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 14/60 | 278.0s | LR: 2.0e-04 | Loss: 5.6501/5.8413 | IoU: 0.629 | ObjRec: 38.1% | Gate: R=0.02/T=0.98 *BEST*
+System -> CPU RAM: 2.7 GB (10.3%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 15/60 | 267.3s | LR: 1.9e-04 | Loss: 5.7046/5.7239 | IoU: 0.634 | ObjRec: 38.4% | Gate: R=0.01/T=0.99 *BEST*
+System -> CPU RAM: 2.8 GB (10.5%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 16/60 | 272.8s | LR: 1.9e-04 | Loss: 5.5885/5.8577 | IoU: 0.630 | ObjRec: 39.5% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 17/60 | 269.4s | LR: 1.8e-04 | Loss: 5.5602/5.7942 | IoU: 0.630 | ObjRec: 38.7% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.8 GB (10.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 18/60 | 267.1s | LR: 1.7e-04 | Loss: 5.3627/5.7787 | IoU: 0.632 | ObjRec: 40.4% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 19/60 | 270.9s | LR: 1.6e-04 | Loss: 5.5124/5.7394 | IoU: 0.633 | ObjRec: 38.3% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.8 GB (10.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 20/60 | 275.8s | LR: 1.5e-04 | Loss: 5.3971/5.6694 | IoU: 0.633 | ObjRec: 38.6% | Gate: R=0.01/T=0.99 *BEST*
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 21/60 | 272.7s | LR: 1.4e-04 | Loss: 5.1856/5.7074 | IoU: 0.635 | ObjRec: 38.3% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 22/60 | 273.5s | LR: 1.3e-04 | Loss: 4.9966/5.7482 | IoU: 0.630 | ObjRec: 38.6% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.5%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 23/60 | 279.4s | LR: 1.1e-04 | Loss: 5.2317/5.8044 | IoU: 0.630 | ObjRec: 38.2% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 24/60 | 280.9s | LR: 1.0e-04 | Loss: 5.4058/5.6948 | IoU: 0.630 | ObjRec: 36.3% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 25/60 | 277.0s | LR: 8.8e-05 | Loss: 5.2322/5.7631 | IoU: 0.630 | ObjRec: 39.5% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.5%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 26/60 | 271.3s | LR: 7.5e-05 | Loss: 5.1951/5.7027 | IoU: 0.633 | ObjRec: 37.9% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 27/60 | 269.0s | LR: 6.2e-05 | Loss: 5.3130/5.7232 | IoU: 0.633 | ObjRec: 38.3% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 28/60 | 276.2s | LR: 5.1e-05 | Loss: 5.0408/5.7225 | IoU: 0.634 | ObjRec: 38.7% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 29/60 | 274.7s | LR: 4.0e-05 | Loss: 5.1384/5.7108 | IoU: 0.634 | ObjRec: 38.7% | Gate: R=0.01/T=0.99
+System -> CPU RAM: 2.7 GB (10.5%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 30/60 | 271.6s | LR: 3.0e-05 | Loss: 5.1741/5.6976 | IoU: 0.635 | ObjRec: 38.2% | Gate: R=0.01/T=0.99
+
+  Early stopping -- no improvement for 10 epochs.
+
+  Phase 2 complete. Best epoch: 20, Best val loss: 5.6694
+  Saved training history to training_history_v2_phase2.png
+[DEBUG] Resolving path for llvip...
+[DEBUG] Found llvip at /kaggle/input/datasets/saisumathappala/llvip-dataset/LLVIP
+ LLVIP [train]: 12025 RGB+Thermal pairs
+ LLVIP [test]: 3463 RGB+Thermal pairs
+[DEBUG] Resolving path for forestpersons...
+[DEBUG] Found forestpersons at /kaggle/input/datasets/sayjadrahman/forestpersons-subset-5k/ForestPersons
+ ForestPersons (rgb) [train]: 3976 single-modality samples
+ ForestPersons (rgb) [val]: 994 single-modality samples
+[DEBUG] Resolving path for forestpersonsir...
+[DEBUG] Found forestpersonsir at /kaggle/input/datasets/sayjadrahman/forestpersonsir-subset-5k/ForestPersonsIR
+ ForestPersons (thermal) [train]: 4000 single-modality samples
+ ForestPersons (thermal) [val]: 1000 single-modality samples
+
+============================================================
+  Phase 3 DataLoaders Created
+============================================================
+  Training:     6720 samples (210 batches)
+  Validation:   5457 samples (171 batches)
+  Batch size: 32
+============================================================
+======================================================================
+  PHASE 3: Full Mix Polish
+======================================================================
+  Device:       cuda
+  Epochs:       25 (patience=10)
+  LR:           1e-05
+  CMM:          ON
+  Contrast:     ON
+  Gate Reg:     ON
+  Trainable:    139,337
+  Train:        210 batches
+  Validation:   171 batches
+======================================================================
+System -> CPU RAM: 2.8 GB (10.5%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  1/25 | 322.6s | LR: 9.1e-06 | Loss: nan/nan | IoU: nan | ObjRec: 0.0% | Gate: R=nan/T=nan
+System -> CPU RAM: 2.8 GB (10.5%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  2/25 | 325.1s | LR: 6.9e-06 | Loss: nan/nan | IoU: nan | ObjRec: 0.0% | Gate: R=nan/T=nan
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  3/25 | 319.7s | LR: 4.1e-06 | Loss: nan/nan | IoU: nan | ObjRec: 0.0% | Gate: R=nan/T=nan
+System -> CPU RAM: 2.8 GB (10.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  4/25 | 319.9s | LR: 1.9e-06 | Loss: nan/nan | IoU: nan | ObjRec: 0.0% | Gate: R=nan/T=nan
+System -> CPU RAM: 2.7 GB (10.4%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  5/25 | 339.1s | LR: 1.0e-05 | Loss: nan/nan | IoU: nan | ObjRec: 0.0% | Gate: R=nan/T=nan
+System -> CPU RAM: 2.7 GB (10.5%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  6/25 | 352.9s | LR: 9.8e-06 | Loss: nan/nan | IoU: nan | ObjRec: 0.0% | Gate: R=nan/T=nan
+System -> CPU RAM: 2.8 GB (10.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  7/25 | 329.1s | LR: 9.1e-06 | Loss: nan/nan | IoU: nan | ObjRec: 0.0% | Gate: R=nan/T=nan
+System -> CPU RAM: 2.8 GB (10.5%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  8/25 | 321.6s | LR: 8.1e-06 | Loss: nan/nan | IoU: nan | ObjRec: 0.0% | Gate: R=nan/T=nan
+System -> CPU RAM: 2.8 GB (10.6%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E  9/25 | 312.4s | LR: 6.9e-06 | Loss: nan/nan | IoU: nan | ObjRec: 0.0% | Gate: R=nan/T=nan
+System -> CPU RAM: 2.8 GB (10.5%) | GPU VRAM Allocated: 20.3 MB | Reserved: 704.0 MB
+  E 10/25 | 311.4s | LR: 5.5e-06 | Loss: nan/nan | IoU: nan | ObjRec: 0.0% | Gate: R=nan/T=nan
+
+  Early stopping -- no improvement for 10 epochs.
+
+  Phase 3 complete. Best epoch: 1, Best val loss: inf
+  Saved training history to training_history_v2_phase3.png
+
+============================================================
+  STARTING AUTOMATED POST-TRAINING SUITE
+============================================================
+
+[1/3] Running Full Validation Evaluation...
+[DEBUG] Resolving path for llvip...
+[DEBUG] Found llvip at /kaggle/input/datasets/saisumathappala/llvip-dataset/LLVIP
+======================================================================
+  DETECTION EVALUATION — MicroGhost-Thermal
+======================================================================
+  Model:      checkpoints/best_microghost_thermal_v3.pth
+  Dataset:    llvip
+  Device:     cuda
+  Conf thresh:0.25
+  NMS IoU:    0.35
+======================================================================
+Loading model from checkpoints/best_microghost_thermal_v3.pth...
+Loaded MicroGhost-V2 successfully.
+  Processed 200/3463 images (6s)
+  Processed 400/3463 images (13s)
+  Processed 600/3463 images (19s)
+  Processed 800/3463 images (25s)
+  Processed 1000/3463 images (31s)
+  Processed 1200/3463 images (37s)
+  Processed 1400/3463 images (43s)
+  Processed 1600/3463 images (49s)
+  Processed 1800/3463 images (56s)
+  Processed 2000/3463 images (62s)
+  Processed 2200/3463 images (68s)
+  Processed 2400/3463 images (74s)
+  Processed 2600/3463 images (80s)
+  Processed 2800/3463 images (86s)
+  Processed 3000/3463 images (92s)
+  Processed 3200/3463 images (98s)
+  Processed 3400/3463 images (105s)
+  Processed 3463/3463 images (107s)
+
+======================================================================
+  EVALUATION RESULTS
+======================================================================
+  Images evaluated:     3463
+  GT boxes:             8302
+  Predictions (post-NMS): 8968
+  Images with GT:       3463
+  Images with dets:     3237
+----------------------------------------------------------------------
+  mAP@0.50:             34.83%
+  mAP@0.50:0.95:        13.23%
+  Precision@0.50:       45.48%
+  Recall@0.50:          49.13%
+  Mean matched IoU:     0.714
+----------------------------------------------------------------------
+  TP / FP / FN @0.50:   4079 / 4889 / 4223
+  Time:                 107.4s
+======================================================================
+
+[2/3] Generating Visual Diagnostics...
+  -> Diagnosing llvip...
+[DEBUG] Resolving path for llvip...
+[DEBUG] Found llvip at /kaggle/input/datasets/saisumathappala/llvip-dataset/LLVIP
+Loading inference engine...
+Loading model from checkpoints/best_microghost_thermal_v3.pth...
+Loaded MicroGhost-V2 successfully.
+Investigating 3463 validation frames...
+Diagnosing: 100%|███████████████████████████| 3463/3463 [04:12<00:00, 13.74it/s]
+
+========================================
+  DETAILED ERROR PATTERN SUMMARY
+========================================
+  Pure False Positives     : 3500
+  Missed Targets           : 4223
+  Mislocalized             : 1370
+  Correct                  : 4098
+========================================
+✅ Diagnostic snapshots saved to: ./diagnostic_results/llvip/
+  -> Diagnosing forestpersons...
+[DEBUG] Resolving path for forestpersons...
+[DEBUG] Found forestpersons at /kaggle/input/datasets/sayjadrahman/forestpersons-subset-5k/ForestPersons
+Loading inference engine...
+Loading model from checkpoints/best_microghost_thermal_v3.pth...
+Loaded MicroGhost-V2 successfully.
+Investigating 994 validation frames...
+Diagnosing: 100%|█████████████████████████████| 994/994 [02:43<00:00,  6.08it/s]
+
+========================================
+  DETAILED ERROR PATTERN SUMMARY
+========================================
+  Pure False Positives     : 0
+  Missed Targets           : 1807
+  Mislocalized             : 0
+  Correct                  : 0
+========================================
+✅ Diagnostic snapshots saved to: ./diagnostic_results/forestpersons/
+  -> Diagnosing forestpersonsir...
+[DEBUG] Resolving path for forestpersonsir...
+[DEBUG] Found forestpersonsir at /kaggle/input/datasets/sayjadrahman/forestpersonsir-subset-5k/ForestPersonsIR
+Loading inference engine...
+Loading model from checkpoints/best_microghost_thermal_v3.pth...
+Loaded MicroGhost-V2 successfully.
+Investigating 1000 validation frames...
+Diagnosing: 100%|███████████████████████████| 1000/1000 [01:07<00:00, 14.72it/s]
+
+========================================
+  DETAILED ERROR PATTERN SUMMARY
+========================================
+  Pure False Positives     : 23
+  Missed Targets           : 591
+  Mislocalized             : 558
+  Correct                  : 457
+========================================
+✅ Diagnostic snapshots saved to: ./diagnostic_results/forestpersonsir/
+
+[3/3] Exporting to ONNX...
+Loading model from checkpoints/best_microghost_thermal_v3.pth...
+Loaded MicroGhost-V2 successfully.
+  [Warning] ONNX export failed (you may need to run '!pip install onnxscript'): No module named 'onnxscript'
+
+Plug-and-Play Suite Complete! All artifacts saved.
+
+🚀 Training Complete! Running Visual Diagnostics...
+

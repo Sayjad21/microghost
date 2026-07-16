@@ -334,30 +334,6 @@ class ThermalPreprocessor:
                 return ((image - img_min) / (img_max - img_min) * 255).astype(np.uint8)
             return image
 
-    @staticmethod
-    def clean_pascal_bboxes(bboxes, labels, width, height, min_size=2.0):
-        """Clip Pascal boxes to the image frame and remove invalid boxes."""
-        clean_boxes = []
-        clean_labels = []
-        for bbox, label in zip(bboxes, labels):
-            try:
-                xmin, ymin, xmax, ymax = [float(v) for v in bbox[:4]]
-            except (TypeError, ValueError):
-                continue
-            if not all(np.isfinite(v) for v in (xmin, ymin, xmax, ymax)):
-                continue
-
-            xmin = max(0.0, min(float(width), xmin))
-            xmax = max(0.0, min(float(width), xmax))
-            ymin = max(0.0, min(float(height), ymin))
-            ymax = max(0.0, min(float(height), ymax))
-            if xmax - xmin < min_size or ymax - ymin < min_size:
-                continue
-
-            clean_boxes.append([xmin, ymin, xmax, ymax])
-            clean_labels.append(int(label))
-        return clean_boxes, clean_labels
-
     def process(self, image_rgb, image_thermal, bboxes_pascal, labels,
                 img_size, augment=False, cmm_alpha=0.0):
         """
@@ -377,9 +353,6 @@ class ThermalPreprocessor:
             targets: dict of grid-encoded targets
         """
         h_orig, w_orig = img_size
-        bboxes_pascal, labels = self.clean_pascal_bboxes(
-            bboxes_pascal, labels, w_orig, h_orig
-        )
 
         # Normalize thermal
         image_thermal = self.normalize(image_thermal)
@@ -415,19 +388,12 @@ class ThermalPreprocessor:
         valid_labels = []
         h_new, w_new = self.augmentor.input_h, self.augmentor.input_w
 
-        bboxes_pascal, labels = self.clean_pascal_bboxes(
-            bboxes_pascal, labels, w_new, h_new, min_size=1.0
-        )
-
         for bbox, lbl in zip(bboxes_pascal, labels):
             xmin, ymin, xmax, ymax = bbox
             cx = ((xmin + xmax) / 2) / w_new
             cy = ((ymin + ymax) / 2) / h_new
             w = (xmax - xmin) / w_new
             h = (ymax - ymin) / h_new
-
-            if not all(np.isfinite(v) for v in (cx, cy, w, h)):
-                continue
 
             cx = max(0.0, min(1.0, cx))
             cy = max(0.0, min(1.0, cy))

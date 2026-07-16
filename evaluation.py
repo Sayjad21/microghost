@@ -16,7 +16,7 @@ import torch
 from torch.utils.data import Subset
 
 from config import (
-    INPUT_HEIGHT, INPUT_WIDTH, DEVICE, DEFAULT_ANCHOR_SIZES,
+    INPUT_HEIGHT, INPUT_WIDTH, DEVICE,
     CONFIDENCE_THRESHOLD, NMS_IOU_THRESHOLD,
 )
 from data_loading import get_val_base_dataset
@@ -216,7 +216,8 @@ def run_detection_evaluation(
         print(f"  NMS IoU:    {NMS_IOU_THRESHOLD}")
         print("=" * 70)
 
-    model = load_inference_model(model_path, device=device)
+    model, metadata = load_inference_model(model_path, device=device)
+    anchor_sizes = metadata['anchor_sizes']
     preprocessor = ThermalPreprocessor()
     val_dataset = get_val_base_dataset(dataset_name, dataset_root=dataset_root)
 
@@ -251,7 +252,7 @@ def run_detection_evaluation(
         detections = decode_predictions(
             preds['obj_small'][0], preds['bbox_small'][0],
             preds['obj_large'][0], preds['bbox_large'][0],
-            anchor_sizes=DEFAULT_ANCHOR_SIZES,
+            anchor_sizes=anchor_sizes,
             conf_threshold=conf_threshold,
         )
 

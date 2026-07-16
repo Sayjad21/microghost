@@ -8,8 +8,9 @@ matplotlib>=3.7.0
 seaborn>=0.12.0
 tqdm>=4.65.0
 psutil>=5.9.0
+onnx>=1.16.0
+onnxscript>=0.1.0
+huggingface_hub>=0.23.0
 
-# Optional - only needed for export mode
+# Optional - only needed for TFLite export mode
 # tensorflow>=2.13.0
-# onnx>=1.14.0
-# onnx-tf>=1.10.0
