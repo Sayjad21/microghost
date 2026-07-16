@@ -34,7 +34,9 @@ DEFAULT_ANCHOR_SIZES = [0.0717509437717046, 0.13346257948562704, 0.4044514489729
 CONFIDENCE_THRESHOLD = 0.20
 DEFAULT_LAPLACIAN_THRESHOLD = 80.0
 THERMAL_ONLY_CONFIDENCE_THRESHOLD = 0.20
-RGB_ONLY_CONFIDENCE_THRESHOLD = 0.10
+RGB_ONLY_CONFIDENCE_THRESHOLD = 0.16
+RGB_ONLY_MIN_OBJECTNESS = 0.18
+RGB_ONLY_MAX_DETECTIONS = 4
 NMS_IOU_THRESHOLD = 0.35
 MAX_DETECTIONS = 10
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
@@ -68,6 +70,12 @@ def normalize_thermal(image):
     if img_max > img_min:
         return ((image - img_min) / (img_max - img_min) * 255).astype(np.uint8)
     return image
+
+
+def build_rgb_thermal_proxy(image_bgr):
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    inverted = 255 - gray
+    return cv2.GaussianBlur(inverted, (3, 3), 0)
 
 
 def calculate_iou(box1, box2):
@@ -230,8 +238,21 @@ def filter_by_laplacian(lap_image, detections, lap_thresh, thermal_present=True,
             det["lap_filter"] = "rejected_low_thermal_low_conf"
             continue
 
-        if lap_var >= lap_thresh:
+        thermal_only_hot_body = (
+            thermal_present
+            and not rgb_present
+            and det.get("combined_conf", 0.0) >= 0.72
+            and det.get("thermal_peak", 0.0) >= 0.95
+            and det.get("thermal_hot_ratio", 0.0) >= 0.10
+            and det.get("thermal_hot_vspan", 0.0) >= 0.55
+            and box_w >= 0.045
+            and box_h >= 0.16
+        )
+
+        if lap_var >= lap_thresh or thermal_only_hot_body:
             det["lap_filter"] = "kept"
+            if thermal_only_hot_body and lap_var < lap_thresh:
+                det["lap_filter"] = "kept_hot_thermal_body"
             confirmed.append(det)
 
     return confirmed
@@ -327,6 +348,33 @@ def filter_thermal_only_artifacts(detections):
         kept.append(det)
 
     return kept
+
+
+def filter_rgb_only_detections(detections):
+    kept = []
+    for det in detections:
+        x1, y1, x2, y2 = [float(value) for value in det["bbox"]]
+        width = x2 - x1
+        height = y2 - y1
+        aspect = height / max(width, 1e-6)
+        objectness = float(det.get("conf", 0.0))
+        confidence = float(det.get("combined_conf", objectness))
+
+        too_weak = objectness < RGB_ONLY_MIN_OBJECTNESS and confidence < 0.62
+        not_person_shaped = aspect < 1.15 or aspect > 4.2
+        too_small = width < 0.035 or height < 0.055
+        too_flat = height <= 0 or width <= 0
+
+        if too_weak or not_person_shaped or too_small or too_flat:
+            continue
+
+        kept.append(det)
+
+    return sorted(
+        kept,
+        key=lambda item: (item.get("conf", 0.0), item.get("combined_conf", 0.0)),
+        reverse=True,
+    )[:RGB_ONLY_MAX_DETECTIONS]
 
 
 class OnnxMicroGhostEngine:
@@ -594,9 +642,8 @@ async def analyze(
         effective_lap = lap_thresh
     else:
         mode = "rgb_only"
-        h, w = rgb_bgr.shape[:2]
         rgb_for_model = cv2.cvtColor(rgb_bgr, cv2.COLOR_BGR2RGB)
-        thermal_for_model = np.zeros((h, w), dtype=np.uint8)
+        thermal_for_model = build_rgb_thermal_proxy(rgb_bgr)
         primary_bgr = rgb_bgr
         lap_image = rgb_for_model
         effective_conf = RGB_ONLY_CONFIDENCE_THRESHOLD if conf_thresh is None else conf_thresh
@@ -614,6 +661,8 @@ async def analyze(
         )
         if mode == "thermal_only":
             detections = filter_thermal_only_artifacts(detections)
+        elif mode == "rgb_only":
+            detections = filter_rgb_only_detections(detections)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

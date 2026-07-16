@@ -23,6 +23,8 @@
 - Added a merge-related-boxes toggle.
 - Added backend performance metrics in the API response.
 - Added upload size control and image downscaling to reduce memory pressure on Vercel.
+- Added a thermal-only hot-body retention rule so strong human detections are not discarded just because the thermal blob is smooth.
+- Added an RGB-only inverted-grayscale proxy channel plus conservative RGB post-filtering to reduce weak false positives.
 
 ## Threshold Locations for Experiments
 
@@ -34,11 +36,13 @@ Main backend threshold constants:
   - Backend default for `lap_thresh`.
 - `frontend/api/analyze.py:36` - `THERMAL_ONLY_CONFIDENCE_THRESHOLD = 0.20`
   - Default confidence when only thermal is uploaded.
-- `frontend/api/analyze.py:37` - `RGB_ONLY_CONFIDENCE_THRESHOLD = 0.10`
+- `frontend/api/analyze.py:37` - `RGB_ONLY_CONFIDENCE_THRESHOLD = 0.16`
   - Default confidence when only RGB is uploaded.
-- `frontend/api/analyze.py:565` - API form default: `lap_thresh: float = Form(default=DEFAULT_LAPLACIAN_THRESHOLD)`.
-- `frontend/api/analyze.py:593` - thermal-only confidence is selected here.
-- `frontend/api/analyze.py:602` - RGB-only confidence is selected here.
+- `frontend/api/analyze.py:38` - `RGB_ONLY_MIN_OBJECTNESS = 0.18`
+  - Extra RGB-only objectness filter used after inference.
+- `frontend/api/analyze.py:613` - API form default: `lap_thresh: float = Form(default=DEFAULT_LAPLACIAN_THRESHOLD)`.
+- `frontend/api/analyze.py:641` - thermal-only confidence is selected here.
+- `frontend/api/analyze.py:649` - RGB-only confidence is selected here.
 
 Frontend default slider value:
 
@@ -50,18 +54,20 @@ Current requested behavior:
 - RGB inference uses Laplacian threshold `80` by default.
 - Thermal inference uses Laplacian threshold `80` by default.
 - Paired RGB + thermal inference uses Laplacian threshold `80` by default.
+- RGB-only inference uses an inverted grayscale proxy as the thermal channel because the model was trained around thermal signal. This reduces random RGB-only false positives and improves RGB-only detection on the provided `rgb/fp1.png` sample.
 - Confidence can be hard-coded in the backend constants above, or changed during a demo by opening "Tune thresholds" and enabling "Override confidence threshold."
 
 ## Performance and Optimization Notes
 
-- `frontend/api/analyze.py:334` creates ONNX Runtime session options.
-- `frontend/api/analyze.py:335` sets `intra_op_num_threads = 1`.
-- `frontend/api/analyze.py:336` sets `inter_op_num_threads = 1`.
+- `frontend/api/analyze.py:382` creates ONNX Runtime session options.
+- `frontend/api/analyze.py:383` sets `intra_op_num_threads = 1`.
+- `frontend/api/analyze.py:384` sets `inter_op_num_threads = 1`.
 - The single-threaded ONNX setup helps avoid serverless CPU oversubscription during live demo traffic.
-- `frontend/api/analyze.py:40` limits uploads to 8 MB.
-- `frontend/api/analyze.py:41` limits the longest image side to 1600 px.
-- `frontend/api/analyze.py:445` contains the resize helper used before inference.
-- `frontend/api/analyze.py:474` collects runtime CPU/RAM telemetry.
+- `frontend/api/analyze.py:42` limits uploads to 8 MB.
+- `frontend/api/analyze.py:43` limits the longest image side to 1600 px.
+- `frontend/api/analyze.py:75` builds the RGB-only thermal proxy.
+- `frontend/api/analyze.py:493` contains the resize helper used before inference.
+- `frontend/api/analyze.py:522` collects runtime CPU/RAM telemetry.
 - `frontend/vercel.json:5` gives the Python function up to 300 seconds.
 - `frontend/vercel.json:6` sets function memory to 1024 MB.
 - `frontend/vercel.json:7` excludes frontend build files from the Python function bundle.
@@ -154,6 +160,8 @@ If Vercel asks for the project directory, choose the `frontend` directory. If it
 - "The frontend is a one-page Next.js inference console for RGB, thermal, or paired inputs."
 - "The model runs through ONNX Runtime in a Vercel Python serverless function."
 - "The default Laplacian texture threshold is fixed at 80 for RGB, thermal, and paired inference."
+- "Thermal-only mode keeps high-confidence hot human bodies even when the body texture is smooth, which improves the 190003/190006/190007 demo frames."
+- "RGB-only mode uses an inverted grayscale proxy channel and conservative filtering because the model is thermal-first."
 - "The UI exposes threshold tuning so we can demonstrate how texture filtering affects false positives."
 - "The live progress bar gives feedback during serverless inference."
 - "The metric widgets show runtime, CPU estimate, CPU clock where available, RAM, thread count, and system memory."
